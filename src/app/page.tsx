@@ -13,6 +13,7 @@ import {
   ForecastResult
 } from "@/libs/cashflowLogic";
 import TransactionTable from "@/components/TransactionTable";
+import CashFlowChart from "@/components/CashFlowChart";
 
 export default function Dashboard() {
   // --- STATE ---
@@ -267,6 +268,14 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* VISUAL CHART */}
+        {forecast && forecast.chartData.length > 0 && (
+          <div className="mb-8">
+            <CashFlowChart data={forecast.chartData} />
+          </div>
+        )}
+
 
         {/* TABLE */}
         <TransactionTable

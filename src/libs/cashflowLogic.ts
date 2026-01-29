@@ -37,12 +37,19 @@ export interface CashFlowAction {
     crunchDate?: string;
 }
 
+// NEW: Chart Data Point Interface
+export interface ChartDataPoint {
+    date: string;
+    balance: number;
+}
+
 export interface ForecastResult {
     monthlyBurn: number;
     monthlyInflow: number;
     netBurn: number;
     runwayMonths: number | "Infinity";
     recurringItems: string[];
+    chartData: ChartDataPoint[]; // <--- NEW
 }
 
 // --- CONFIGURATION ---
@@ -81,7 +88,6 @@ const guessCategory = (text: string, type: "IN" | "OUT"): Category => {
 
 // --- CORE FUNCTIONS ---
 
-// UPDATED: Supports Custom Template, Tally, and QuickBooks
 export const normalizeData = (csvText: string, region: Region): Promise<Transaction[]> => {
     return new Promise((resolve) => {
         Papa.parse(csvText, {
@@ -90,42 +96,27 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
             complete: (results: any) => {
                 const rawData = results.data as any[];
                 const normalized: Transaction[] = rawData.map((row, idx) => {
-                    let payee = "Unknown";
-                    let description = "";
-                    let amount = 0;
-                    let type: "IN" | "OUT" = "OUT";
+                    let payee = "Unknown", description = "", amount = 0, type: "IN" | "OUT" = "OUT";
                     let date = new Date().toISOString();
                     let category: Category | "Auto" = "Auto";
 
-                    // Helper to safely parse numbers with commas
                     const safeParse = (val: any) => {
                         if (typeof val === "number") return val;
                         if (!val) return 0;
                         return parseFloat(val.toString().replace(/,/g, ""));
                     };
 
-                    // 1. CHECK FOR CUSTOM TEMPLATE (Has "Payee" or "Category" column)
                     if (row["Payee"] || row["Category"]) {
                         payee = row["Payee"] || "Unknown";
                         description = row["Description"] || "";
                         const amtRaw = safeParse(row["Amount"]);
                         amount = Math.abs(amtRaw);
-
-                        // Handle explicit Type
-                        if (row["Type"] && row["Type"].toUpperCase() === "IN") {
-                            type = "IN";
-                        } else {
-                            type = "OUT";
-                        }
-
+                        type = (row["Type"] && row["Type"].toUpperCase() === "IN") ? "IN" : "OUT";
                         date = row["Date"] || date;
-
-                        // Use provided category if valid
                         if (row["Category"] && Object.keys(CATEGORY_RULES).includes(row["Category"])) {
                             category = row["Category"] as Category;
                         }
                     }
-                    // 2. FALLBACK: TALLY (India)
                     else if (region === "IN") {
                         payee = row["Party Name"] || row["Particulars"] || "Unknown";
                         description = row["Vch Type"] || "";
@@ -134,7 +125,6 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
                         type = row["Vch Type"] && row["Vch Type"].includes("Receipt") ? "IN" : "OUT";
                         date = row["Date"] || date;
                     }
-                    // 3. FALLBACK: QUICKBOOKS (USA)
                     else {
                         payee = row["Name"] || "Unknown";
                         description = row["Memo/Description"] || "";
@@ -144,7 +134,6 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
                         date = row["Date"] || date;
                     }
 
-                    // If category wasn't in the CSV, guess it now
                     const finalCategory = category !== "Auto"
                         ? category
                         : guessCategory(payee + " " + description, type);
@@ -172,14 +161,14 @@ export const generateActions = (
 ): CashFlowAction[] => {
     const actions: CashFlowAction[] = [];
 
-    // 1. General Shortfall Calculation
     const totalIn = transactions.filter(t => t.type === "IN").reduce((acc, t) => acc + t.amount, 0);
     const totalOut = transactions.filter(t => t.type === "OUT").reduce((acc, t) => acc + t.amount, 0);
     const projectedBalance = currentBalance + totalIn - totalOut;
 
-    // 2. Exact Crunch Date Logic (Time Machine)
+    // Exact Crunch Date Logic
     let crunchDate: string | undefined = undefined;
 
+    // Sort transactions by date
     const sortedTx = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let runningBalance = currentBalance;
@@ -188,14 +177,12 @@ export const generateActions = (
         if (t.type === "IN") runningBalance += t.amount;
         else runningBalance -= t.amount;
 
-        // Check if balance goes negative
         if (runningBalance < 0 && !crunchDate) {
             crunchDate = t.date;
             break;
         }
     }
 
-    // ACTION 1: CASH CRUNCH ALERT
     if (projectedBalance < 0 || crunchDate) {
         const dateObj = crunchDate ? new Date(crunchDate) : new Date();
         const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -215,7 +202,6 @@ export const generateActions = (
         });
     }
 
-    // ACTION 2: Collect Payment
     const largestIn = transactions
         .filter((t) => t.type === "IN")
         .sort((a, b) => b.amount - a.amount)[0];
@@ -232,7 +218,6 @@ export const generateActions = (
         });
     }
 
-    // ACTION 3: Delay Payment
     const largestOut = transactions
         .filter((t) => t.type === "OUT")
         .filter((t) => {
@@ -256,19 +241,36 @@ export const generateActions = (
     return actions;
 };
 
+// UPDATED: Now generates Chart Data
 export const calculateForecast = (transactions: Transaction[], currentBalance: number): ForecastResult => {
     const recurringMap = new Map<string, number>();
     const recurringItems: string[] = [];
 
-    // Recurring Outflows
-    transactions
-        .filter(t => t.type === "OUT")
-        .forEach(t => {
-            const rules = CATEGORY_RULES[t.category];
-            if (rules && rules.isRecurring) {
-                recurringMap.set(t.payee, Math.abs(t.amount));
-            }
+    // 1. Chart Data Generation
+    const sortedTx = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const chartData: ChartDataPoint[] = [];
+
+    // Add Today's starting point
+    chartData.push({ date: new Date().toISOString().split('T')[0], balance: currentBalance });
+
+    let runningBal = currentBalance;
+    sortedTx.forEach(t => {
+        if (t.type === "IN") runningBal += t.amount;
+        else runningBal -= t.amount;
+
+        // Only add point if date is different from last point (simplify graph)
+        // or just push every transaction point for accuracy
+        chartData.push({
+            date: t.date.split('T')[0], // YYYY-MM-DD
+            balance: runningBal
         });
+    });
+
+    // 2. Existing Forecast Logic
+    transactions.filter(t => t.type === "OUT").forEach(t => {
+        const rules = CATEGORY_RULES[t.category];
+        if (rules && rules.isRecurring) recurringMap.set(t.payee, Math.abs(t.amount));
+    });
 
     let monthlyBurn = 0;
     recurringMap.forEach((amount, payee) => {
@@ -276,26 +278,22 @@ export const calculateForecast = (transactions: Transaction[], currentBalance: n
         recurringItems.push(payee);
     });
 
-    // Recurring Inflows
     let monthlyInflow = 0;
-    transactions
-        .filter(t => t.type === "IN")
-        .forEach(t => {
-            if (t.description.toLowerCase().includes("retainer")) monthlyInflow += t.amount;
-        });
+    transactions.filter(t => t.type === "IN").forEach(t => {
+        if (t.description.toLowerCase().includes("retainer")) monthlyInflow += t.amount;
+    });
 
     const netBurn = monthlyBurn - monthlyInflow;
     let runwayMonths: number | "Infinity" = "Infinity";
 
-    if (netBurn > 0) {
-        runwayMonths = parseFloat((currentBalance / netBurn).toFixed(1));
-    }
+    if (netBurn > 0) runwayMonths = parseFloat((currentBalance / netBurn).toFixed(1));
 
     return {
         monthlyBurn,
         monthlyInflow,
         netBurn,
         runwayMonths,
-        recurringItems
+        recurringItems,
+        chartData // <--- Return the chart data
     };
 };
