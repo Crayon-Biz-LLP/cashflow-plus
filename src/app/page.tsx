@@ -13,10 +13,8 @@ import {
   ForecastResult
 } from "@/libs/cashflowLogic";
 import TransactionTable from "@/components/TransactionTable";
-import CashFlowChart from "@/components/CashFlowChart";
 
 export default function Dashboard() {
-  // --- STATE ---
   const [region, setRegion] = useState<Region>("IN");
   const [balance, setBalance] = useState<number>(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -25,11 +23,8 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
-
-  // NEW: Track dismissed actions so they don't reappear instantly
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
 
-  // --- MEMORY: LOAD ---
   useEffect(() => {
     const savedTx = localStorage.getItem("cashflow_transactions");
     const savedBal = localStorage.getItem("cashflow_balance");
@@ -47,7 +42,6 @@ export default function Dashboard() {
     setIsLoaded(true);
   }, []);
 
-  // --- HELPER: EXPLICIT SAVE ---
   const saveAndUpdate = (newTx: Transaction[], newBal: number, newReg: Region) => {
     setTransactions(newTx);
     setBalance(newBal);
@@ -55,7 +49,6 @@ export default function Dashboard() {
     localStorage.setItem("cashflow_transactions", JSON.stringify(newTx));
     localStorage.setItem("cashflow_balance", newBal.toString());
     localStorage.setItem("cashflow_region", newReg);
-    // Clear dismissed cards on data change so logic can re-evaluate
     setDismissedIds([]);
   };
 
@@ -68,20 +61,17 @@ export default function Dashboard() {
     }
   };
 
-  // NEW: DEMO MODE HANDLER
   const loadDemoData = () => {
     const demoBalance = 300000;
     const demoTx: Transaction[] = [
-      { id: "d1", date: "2026-02-01", payee: "Team Payroll", description: "Monthly Salaries", amount: 1100000, type: "OUT", category: "Payroll & Team" },
-      { id: "d2", date: "2026-02-01", payee: "Indiqube Rent", description: "Office Rent", amount: 100000, type: "OUT", category: "Rent & Facilities" },
-      { id: "d3", date: "2026-02-15", payee: "Client Alpha", description: "Pending Invoice", amount: 800000, type: "IN", category: "Sales / Revenue" },
-      { id: "d4", date: "2026-02-05", payee: "AWS", description: "Hosting", amount: 25000, type: "OUT", category: "Software & Subscriptions" },
-      { id: "d5", date: "2026-01-29", payee: "Team Lunch", description: "Offsite", amount: 15000, type: "OUT", category: "Travel & Entertainment" }
+      { id: "d1", date: "2026-02-01", payee: "Team Payroll", description: "Monthly Salaries", amount: 1100000, type: "OUT", category: "Payroll & Team", status: "PENDING" },
+      { id: "d2", date: "2026-02-01", payee: "Indiqube Rent", description: "Office Rent", amount: 100000, type: "OUT", category: "Rent & Facilities", status: "PENDING" },
+      { id: "d3", date: "2026-02-15", payee: "Client Alpha", description: "Pending Invoice", amount: 2500000, type: "IN", category: "Sales / Revenue", status: "PENDING" },
+      { id: "d4", date: "2026-02-05", payee: "AWS", description: "Hosting", amount: 25000, type: "OUT", category: "Software & Subscriptions", status: "PENDING" },
     ];
     saveAndUpdate(demoTx, demoBalance, "IN");
   };
 
-  // --- THE BRAIN ---
   useEffect(() => {
     const actionResults = generateActions(transactions, balance, region);
     setActions(actionResults);
@@ -89,7 +79,6 @@ export default function Dashboard() {
     setForecast(forecastResults);
   }, [transactions, balance, region]);
 
-  // --- HANDLERS ---
   const handleDismiss = (id: string) => {
     setDismissedIds(prev => [...prev, id]);
   };
@@ -151,15 +140,17 @@ export default function Dashboard() {
   };
 
   const currency = region === "IN" ? "₹" : "$";
-
-  // Filter out dismissed actions
   const visibleActions = actions.filter(a => !dismissedIds.includes(a.id));
+
+  // Determine Safe/Danger Mode
+  const isCrunch = forecast && forecast.crunchDate !== null;
+  const crunchDatePretty = isCrunch ? new Date(forecast.crunchDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : "";
 
   if (!isLoaded) return <div className="p-10 text-gray-500 font-mono">Loading CashFlow...</div>;
 
   return (
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
-      <div className="max-w-4xl mx-auto flex justify-between items-center mb-10">
+      <div className="max-w-4xl mx-auto flex justify-between items-center mb-8">
         <h1 className="text-2xl font-bold text-gray-800">CashFlow+</h1>
 
         <div className="flex items-center space-x-4">
@@ -178,6 +169,45 @@ export default function Dashboard() {
 
       <main className="max-w-4xl mx-auto space-y-8">
 
+        {/* === 1. HERO STATUS CARD (Always Visible) === */}
+        {isCrunch ? (
+          // DANGER STATE
+          <div className="bg-red-50 border-l-8 border-red-500 rounded-xl p-8 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-pulse-slow">
+            <div>
+              <span className="bg-red-200 text-red-800 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">Critical Alert</span>
+              <h2 className="text-3xl font-bold text-red-700 mt-2">Cash Crunch: {crunchDatePretty}</h2>
+              <p className="text-red-600 mt-1">You will run out of money on this date based on committed expenses.</p>
+            </div>
+            <a
+              href="https://wa.me/?text=Emergency%20Cash%20Crunch%20Meeting%20Request"
+              target="_blank"
+              className="bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow hover:bg-red-700 transition-colors whitespace-nowrap"
+            >
+              🚨 Alert Investors
+            </a>
+          </div>
+        ) : (
+          // SAFE STATE
+          <div className="bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl p-8 shadow-lg text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="bg-white/20 text-white text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">Healthy</span>
+                {forecast && <span className="text-emerald-100 text-sm">Runway: {forecast.runwayMonths} Months</span>}
+              </div>
+              <h2 className="text-3xl font-bold">Cash Flow Secure</h2>
+              {/* NEW: Runway End Date */}
+              {forecast && forecast.runwayEndDate && (
+                <p className="text-emerald-50 mt-1 text-sm font-medium opacity-90">
+                  Cash positive until {forecast.runwayEndDate}
+                </p>
+              )}
+            </div>
+            <div className="text-right">
+              <div className="text-4xl font-bold opacity-20">✓</div>
+            </div>
+          </div>
+        )}
+
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <label className="block text-sm font-medium text-gray-500 mb-2">Current Bank Balance</label>
@@ -187,7 +217,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* UPLOAD CARD + DEMO MODE + PRIVACY SHIELD */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative group flex flex-col justify-between">
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-2">Upload Tally/QuickBooks CSV</label>
@@ -196,45 +225,31 @@ export default function Dashboard() {
                 <input type="file" accept=".csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
               </div>
             </div>
-
-            {/* MICRO-FEATURES 1 & 2: Demo Mode + Privacy Text */}
             <div className="mt-3 flex justify-between items-center text-xs">
               <button onClick={loadDemoData} className="text-blue-600 hover:text-blue-800 font-medium underline">
                 No CSV? Try Demo Mode
               </button>
-              <span className="text-gray-400 flex items-center">
-                🔒 Secure Client-Side Parsing
-              </span>
+              <span className="text-gray-400 flex items-center">🔒 Secure Client-Side Parsing</span>
             </div>
           </div>
         </div>
 
-        {/* ACTIONS */}
-        {visibleActions.length > 0 ? (
+        {/* ACTIONS LIST */}
+        {visibleActions.length > 0 && (
           <div>
-            <h2 className="text-lg font-semibold text-gray-700 mb-4">Recommended Actions</h2>
+            <h2 className="text-lg font-semibold text-gray-700 mb-4">Smart Actions</h2>
             <div className="grid gap-4">
               {visibleActions.map((action) => (
                 <div key={action.id} className={`relative p-6 rounded-xl border-l-4 shadow-sm bg-white flex justify-between items-center ${action.priority === "URGENT" ? "border-red-500" : action.priority === "HIGH" ? "border-orange-400" : "border-blue-400"}`}>
-
-                  {/* MICRO-FEATURE 3: Dismiss Button */}
-                  <button
-                    onClick={() => handleDismiss(action.id)}
-                    className="absolute top-2 right-2 text-gray-300 hover:text-gray-500"
-                    title="Mark as Done"
-                  >
-                    &times;
-                  </button>
-
+                  <button onClick={() => handleDismiss(action.id)} className="absolute top-2 right-2 text-gray-300 hover:text-gray-500" title="Mark as Done">&times;</button>
                   <div>
                     <div className="flex items-center space-x-2 mb-1">
                       <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase ${action.priority === "URGENT" ? "bg-red-100 text-red-600" : action.priority === "HIGH" ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"}`}>{action.priority}</span>
-                      {action.crunchDate && <span className="ml-2 bg-red-600 text-white text-xs px-2 py-0.5 rounded font-bold">{action.crunchDate}</span>}
                       <h3 className="font-bold text-gray-800 ml-2">{action.title}</h3>
                     </div>
                     <p className="text-gray-600 text-sm">{action.description}</p>
                   </div>
-                  <div className="text-right mr-6"> {/* Added mr-6 to avoid overlap with dismiss button */}
+                  <div className="text-right mr-6">
                     <p className="font-bold text-xl text-gray-800 mb-2">{currency}{Math.abs(action.amount).toLocaleString()}</p>
                     <a href={getActionLink(action)} target="_blank" rel="noreferrer" className="inline-flex items-center text-sm font-medium px-4 py-2 rounded-lg transition-colors bg-blue-50 text-blue-700 hover:bg-blue-100">
                       {action.actionType === "WHATSAPP" ? "📱 WhatsApp" : "📧 Email"}
@@ -244,40 +259,8 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-        ) : (
-          /* Empty State for Gratification */
-          <div className="bg-green-50 border border-green-100 rounded-xl p-8 text-center">
-            <h3 className="text-green-800 font-bold text-lg">All caught up! 🎉</h3>
-            <p className="text-green-600 text-sm">No immediate cash flow risks detected.</p>
-          </div>
         )}
 
-        {/* FORECAST */}
-        {forecast && forecast.recurringItems.length > 0 && (
-          <div className="bg-gray-900 rounded-xl p-6 text-white shadow-lg">
-            <div className="flex flex-col md:flex-row justify-between md:items-center gap-6">
-              <div>
-                <h2 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Monthly Forecast</h2>
-                <div className="text-3xl font-bold flex items-center gap-4">
-                  <span>Burn: {currency}{forecast.monthlyBurn.toLocaleString()}</span>
-                  <span className="text-gray-600 font-light">|</span>
-                  <span className={`${forecast.runwayMonths !== "Infinity" && forecast.runwayMonths < 3 ? "text-red-400" : "text-green-400"}`}>Runway: {forecast.runwayMonths} Months</span>
-                </div>
-                <p className="text-gray-400 text-sm mt-2">Recurring: <span className="text-gray-300 italic">{forecast.recurringItems.join(", ")}</span></p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* VISUAL CHART */}
-        {forecast && forecast.chartData.length > 0 && (
-          <div className="mb-8">
-            <CashFlowChart data={forecast.chartData} />
-          </div>
-        )}
-
-
-        {/* TABLE */}
         <TransactionTable
           transactions={transactions}
           region={region}

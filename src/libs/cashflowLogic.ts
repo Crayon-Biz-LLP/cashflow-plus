@@ -3,6 +3,7 @@ import Papa from "papaparse";
 
 // --- TYPES ---
 export type Region = "IN" | "US";
+export type TransactionStatus = "PAID" | "PENDING";
 
 export type Category =
     | "Payroll & Team"
@@ -24,6 +25,7 @@ export interface Transaction {
     amount: number;
     type: "IN" | "OUT";
     category: Category;
+    status: TransactionStatus;
 }
 
 export interface CashFlowAction {
@@ -37,27 +39,22 @@ export interface CashFlowAction {
     crunchDate?: string;
 }
 
-// NEW: Chart Data Point Interface
-export interface ChartDataPoint {
-    date: string;
-    balance: number;
-}
-
 export interface ForecastResult {
     monthlyBurn: number;
     monthlyInflow: number;
     netBurn: number;
     runwayMonths: number | "Infinity";
+    runwayEndDate: string | null;
     recurringItems: string[];
-    chartData: ChartDataPoint[]; // <--- NEW
+    crunchDate: string | null;
 }
 
 // --- CONFIGURATION ---
 
 export const CATEGORY_RULES: Record<Category, { isSacred: boolean; isRecurring: boolean }> = {
     "Payroll & Team": { isSacred: true, isRecurring: true },
-    "Taxes & Compliance": { isSacred: true, isRecurring: false },
-    "Rent & Facilities": { isSacred: true, isRecurring: true },
+    "Taxes & Compliance": { isSacred: false, isRecurring: false },
+    "Rent & Facilities": { isSacred: false, isRecurring: true },
     "Software & Subscriptions": { isSacred: false, isRecurring: true },
     "Marketing & Ads": { isSacred: false, isRecurring: false },
     "Travel & Entertainment": { isSacred: false, isRecurring: false },
@@ -99,6 +96,7 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
                     let payee = "Unknown", description = "", amount = 0, type: "IN" | "OUT" = "OUT";
                     let date = new Date().toISOString();
                     let category: Category | "Auto" = "Auto";
+                    let status: TransactionStatus = "PENDING";
 
                     const safeParse = (val: any) => {
                         if (typeof val === "number") return val;
@@ -115,6 +113,9 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
                         date = row["Date"] || date;
                         if (row["Category"] && Object.keys(CATEGORY_RULES).includes(row["Category"])) {
                             category = row["Category"] as Category;
+                        }
+                        if (row["Status"] && (row["Status"].toUpperCase() === "PAID")) {
+                            status = "PAID";
                         }
                     }
                     else if (region === "IN") {
@@ -145,13 +146,22 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
                         description,
                         amount,
                         type,
-                        category: finalCategory
+                        category: finalCategory,
+                        status
                     };
                 });
                 resolve(normalized);
             },
         });
     });
+};
+
+const isFutureOrToday = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const dStr = d.toISOString().split('T')[0];
+    const todayStr = today.toISOString().split('T')[0];
+    return dStr >= todayStr;
 };
 
 export const generateActions = (
@@ -161,23 +171,40 @@ export const generateActions = (
 ): CashFlowAction[] => {
     const actions: CashFlowAction[] = [];
 
-    const totalIn = transactions.filter(t => t.type === "IN").reduce((acc, t) => acc + t.amount, 0);
-    const totalOut = transactions.filter(t => t.type === "OUT").reduce((acc, t) => acc + t.amount, 0);
-    const projectedBalance = currentBalance + totalIn - totalOut;
+    // LOGIC FIX: For Alerts, we calculate Real Balance first (ALL PAID)
+    // Then we simulate the future timeline
+    let realBalance = currentBalance;
 
-    // Exact Crunch Date Logic
+    // 1. Apply ALL PAID items (Past or Future)
+    transactions.forEach(t => {
+        if (t.status === "PAID") {
+            if (t.type === "IN") realBalance += t.amount;
+            else realBalance -= t.amount;
+        }
+    });
+
+    // 2. Identify Future Pending Items
+    const futurePendingTx = transactions.filter(t => t.status === "PENDING" && isFutureOrToday(t.date));
+
+    // 3. Calculate Projected Shortfall
+    const pendingIn = futurePendingTx.filter(t => t.type === "IN").reduce((acc, t) => acc + t.amount, 0);
+    const pendingOut = futurePendingTx.filter(t => t.type === "OUT").reduce((acc, t) => acc + t.amount, 0);
+
+    // Conservative Projection: We assume Pending OUT happens, but Pending IN might not?
+    // Actually for the "Alert", we usually show the "Net" result.
+    // Let's stick to the standard: Current Real Balance + Pending In - Pending Out
+    const projectedBalance = realBalance + pendingIn - pendingOut;
+
+    // ACTION: Cash Crunch (Using Timetravel)
     let crunchDate: string | undefined = undefined;
+    const sortedFuture = [...futurePendingTx].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    // Sort transactions by date
-    const sortedTx = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    let runningBal = realBalance;
+    for (const t of sortedFuture) {
+        if (t.type === "IN") runningBal += t.amount;
+        else runningBal -= t.amount;
 
-    let runningBalance = currentBalance;
-
-    for (const t of sortedTx) {
-        if (t.type === "IN") runningBalance += t.amount;
-        else runningBalance -= t.amount;
-
-        if (runningBalance < 0 && !crunchDate) {
+        if (runningBal < 0 && !crunchDate) {
             crunchDate = t.date;
             break;
         }
@@ -202,28 +229,27 @@ export const generateActions = (
         });
     }
 
-    const largestIn = transactions
+    // ACTION: Collect Payment
+    const largestPendingIn = futurePendingTx
         .filter((t) => t.type === "IN")
         .sort((a, b) => b.amount - a.amount)[0];
 
-    if (largestIn) {
+    if (largestPendingIn) {
         actions.push({
             id: "in-1",
             title: "Collect Payment",
-            description: `Largest receipt from ${largestIn.payee} (${largestIn.category})`,
-            amount: largestIn.amount,
+            description: `Largest PENDING receipt from ${largestPendingIn.payee}. Mark 'Paid' to improve cash flow.`,
+            amount: largestPendingIn.amount,
             priority: "HIGH",
             actionType: region === "IN" ? "WHATSAPP" : "EMAIL",
-            contactName: largestIn.payee
+            contactName: largestPendingIn.payee
         });
     }
 
-    const largestOut = transactions
+    // ACTION: Delay Payment (Only Non-Sacred)
+    const largestOut = futurePendingTx
         .filter((t) => t.type === "OUT")
-        .filter((t) => {
-            const rules = CATEGORY_RULES[t.category] || CATEGORY_RULES["Uncategorized"];
-            return !rules.isSacred;
-        })
+        .filter((t) => !CATEGORY_RULES[t.category].isSacred)
         .sort((a, b) => b.amount - a.amount)[0];
 
     if (largestOut) {
@@ -241,32 +267,46 @@ export const generateActions = (
     return actions;
 };
 
-// UPDATED: Now generates Chart Data
 export const calculateForecast = (transactions: Transaction[], currentBalance: number): ForecastResult => {
     const recurringMap = new Map<string, number>();
     const recurringItems: string[] = [];
 
-    // 1. Chart Data Generation
-    const sortedTx = [...transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const chartData: ChartDataPoint[] = [];
+    // 1. CALCULATE EFFECTIVE BALANCE
+    // CRITICAL FIX: Use ALL transactions for the balance check, regardless of date.
+    let effectiveRunwayBalance = currentBalance;
 
-    // Add Today's starting point
-    chartData.push({ date: new Date().toISOString().split('T')[0], balance: currentBalance });
-
-    let runningBal = currentBalance;
-    sortedTx.forEach(t => {
-        if (t.type === "IN") runningBal += t.amount;
-        else runningBal -= t.amount;
-
-        // Only add point if date is different from last point (simplify graph)
-        // or just push every transaction point for accuracy
-        chartData.push({
-            date: t.date.split('T')[0], // YYYY-MM-DD
-            balance: runningBal
-        });
+    transactions.forEach(t => {
+        if (t.status === "PAID") {
+            if (t.type === "IN") {
+                effectiveRunwayBalance += t.amount;
+            } else {
+                effectiveRunwayBalance -= t.amount;
+            }
+        }
     });
 
-    // 2. Existing Forecast Logic
+    // 2. CRUNCH DATE LOGIC
+    // We only simulate PENDING transactions that are in the FUTURE (or Today)
+    const futurePendingTx = transactions.filter(t => t.status === "PENDING" && isFutureOrToday(t.date));
+    const sortedTx = [...futurePendingTx].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBal = effectiveRunwayBalance;
+    let crunchDate: string | null = null;
+
+    sortedTx.forEach(t => {
+        if (t.type === "IN") {
+            // Conservative: Pending money doesn't exist until paid
+        } else {
+            // Conservative: Pending bills MUST be paid
+            runningBal -= t.amount;
+        }
+
+        if (runningBal < 0 && !crunchDate) {
+            crunchDate = t.date;
+        }
+    });
+
+    // 3. BURN RATE LOGIC
     transactions.filter(t => t.type === "OUT").forEach(t => {
         const rules = CATEGORY_RULES[t.category];
         if (rules && rules.isRecurring) recurringMap.set(t.payee, Math.abs(t.amount));
@@ -285,15 +325,26 @@ export const calculateForecast = (transactions: Transaction[], currentBalance: n
 
     const netBurn = monthlyBurn - monthlyInflow;
     let runwayMonths: number | "Infinity" = "Infinity";
+    let runwayEndDate: string | null = null;
 
-    if (netBurn > 0) runwayMonths = parseFloat((currentBalance / netBurn).toFixed(1));
+    if (netBurn > 0) {
+        const months = Math.max(0, effectiveRunwayBalance) / netBurn;
+        runwayMonths = parseFloat(months.toFixed(1));
+
+        // CALCULATE EXACT END DATE
+        const daysLeft = Math.round(months * 30);
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + daysLeft);
+        runwayEndDate = endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    }
 
     return {
         monthlyBurn,
         monthlyInflow,
         netBurn,
         runwayMonths,
+        runwayEndDate,
         recurringItems,
-        chartData // <--- Return the chart data
+        crunchDate
     };
 };
