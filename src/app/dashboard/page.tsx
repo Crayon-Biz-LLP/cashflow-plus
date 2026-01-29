@@ -1,62 +1,212 @@
-// src/app/dashboard/page.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { normalizeData, generateActions, Region, CashFlowAction, Transaction, Category } from "@/libs/cashflowLogic";
+import { useRouter } from "next/navigation"; // For redirection
+import Link from "next/link";
+import {
+    normalizeData,
+    generateActions,
+    calculateForecast,
+    Region,
+    Category,
+    CashFlowAction,
+    Transaction,
+    ForecastResult
+} from "@/libs/cashflowLogic";
 import TransactionTable from "@/components/TransactionTable";
+import { LogOut, Home, HelpCircle, X } from "lucide-react";
+
+// --- TUTORIAL COMPONENT ---
+function TutorialModal({ onClose }: { onClose: () => void }) {
+    const [step, setStep] = useState(1);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 relative animate-in fade-in zoom-in duration-300">
+                <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20} /></button>
+
+                <div className="mb-6 flex justify-center">
+                    {/* Steps Indicator */}
+                    <div className="flex gap-2">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className={`h-2 w-12 rounded-full ${step >= i ? "bg-blue-600" : "bg-gray-200"} transition-all`} />
+                        ))}
+                    </div>
+                </div>
+
+                {step === 1 && (
+                    <div className="text-center">
+                        <div className="h-16 w-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">📂</div>
+                        <h3 className="text-xl font-bold mb-2">1. Upload your Data</h3>
+                        <p className="text-gray-600 mb-6">Export your ledger from Tally or QuickBooks as a CSV. Drag and drop it into the upload box.</p>
+                        <button onClick={() => setStep(2)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold w-full">Next</button>
+                    </div>
+                )}
+
+                {step === 2 && (
+                    <div className="text-center">
+                        <div className="h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">📉</div>
+                        <h3 className="text-xl font-bold mb-2">2. Check the 'Death Date'</h3>
+                        <p className="text-gray-600 mb-6">We calculate exactly when you run out of cash. Look for the "Cash Crunch" alert at the top.</p>
+                        <button onClick={() => setStep(3)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold w-full">Next</button>
+                    </div>
+                )}
+
+                {step === 3 && (
+                    <div className="text-center">
+                        <div className="h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">✅</div>
+                        <h3 className="text-xl font-bold mb-2">3. Take Action</h3>
+                        <p className="text-gray-600 mb-6">Use the "Smart Actions" list to delay payments or collect invoices via WhatsApp.</p>
+                        <button onClick={onClose} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold w-full">Get Started</button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
 
 export default function Dashboard() {
-    // --- STATE ---
+    const router = useRouter();
     const [region, setRegion] = useState<Region>("IN");
     const [balance, setBalance] = useState<number>(0);
-
-    // Now we store the raw transactions in State so we can add/remove them
     const [transactions, setTransactions] = useState<Transaction[]>([]);
 
     const [actions, setActions] = useState<CashFlowAction[]>([]);
+    const [forecast, setForecast] = useState<ForecastResult | null>(null);
     const [loading, setLoading] = useState(false);
+    const [isLoaded, setIsLoaded] = useState(false);
+    const [dismissedIds, setDismissedIds] = useState<string[]>([]);
 
-    // --- LOGIC RE-RUNNER ---
-    // Whenever transactions or balance changes, re-calculate the "3 Cards"
+    // Tutorial State
+    const [showTutorial, setShowTutorial] = useState(false);
+    const [userEmail, setUserEmail] = useState("");
+
     useEffect(() => {
-        const results = generateActions(transactions, balance, region);
-        setActions(results);
+        // 1. AUTH CHECK
+        const isLoggedIn = localStorage.getItem("is_logged_in");
+        if (!isLoggedIn) {
+            router.push("/login"); // Protect the route
+            return;
+        }
+        setUserEmail(localStorage.getItem("user_email") || "");
+
+        // 2. TUTORIAL CHECK
+        const hasSeenTutorial = localStorage.getItem("has_seen_tutorial");
+        if (!hasSeenTutorial) {
+            setShowTutorial(true);
+        }
+
+        // 3. LOAD DATA
+        const savedTx = localStorage.getItem("cashflow_transactions");
+        const savedBal = localStorage.getItem("cashflow_balance");
+        const savedRegion = localStorage.getItem("cashflow_region");
+
+        if (savedTx) {
+            try {
+                const parsed = JSON.parse(savedTx);
+                if (Array.isArray(parsed)) setTransactions(parsed);
+            } catch (e) { console.error("Load Error", e); }
+        }
+        if (savedBal) setBalance(parseFloat(savedBal));
+        if (savedRegion) setRegion(savedRegion as Region);
+
+        setIsLoaded(true);
+    }, [router]);
+
+    const closeTutorial = () => {
+        setShowTutorial(false);
+        localStorage.setItem("has_seen_tutorial", "true");
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem("is_logged_in");
+        router.push("/login");
+    };
+
+    const saveAndUpdate = (newTx: Transaction[], newBal: number, newReg: Region) => {
+        setTransactions(newTx);
+        setBalance(newBal);
+        setRegion(newReg);
+        localStorage.setItem("cashflow_transactions", JSON.stringify(newTx));
+        localStorage.setItem("cashflow_balance", newBal.toString());
+        localStorage.setItem("cashflow_region", newReg);
+        setDismissedIds([]);
+    };
+
+    const handleReset = () => {
+        if (confirm("Are you sure you want to wipe all data and start fresh?")) {
+            localStorage.removeItem("cashflow_transactions");
+            localStorage.removeItem("cashflow_balance");
+            localStorage.removeItem("cashflow_region");
+            window.location.reload();
+        }
+    };
+
+    const loadDemoData = () => {
+        const demoBalance = 300000;
+        const demoTx: Transaction[] = [
+            { id: "d1", date: "2026-02-01", payee: "Team Payroll", description: "Monthly Salaries", amount: 1100000, type: "OUT", category: "Payroll & Team", status: "PENDING" },
+            { id: "d2", date: "2026-02-01", payee: "Indiqube Rent", description: "Office Rent", amount: 100000, type: "OUT", category: "Rent & Facilities", status: "PENDING" },
+            { id: "d3", date: "2026-02-15", payee: "Client Alpha", description: "Pending Invoice", amount: 2500000, type: "IN", category: "Sales / Revenue", status: "PENDING" },
+            { id: "d4", date: "2026-02-05", payee: "AWS", description: "Hosting", amount: 25000, type: "OUT", category: "Software & Subscriptions", status: "PENDING" },
+        ];
+        saveAndUpdate(demoTx, demoBalance, "IN");
+    };
+
+    useEffect(() => {
+        const actionResults = generateActions(transactions, balance, region);
+        setActions(actionResults);
+        const forecastResults = calculateForecast(transactions, balance);
+        setForecast(forecastResults);
     }, [transactions, balance, region]);
 
-    // --- HANDLERS ---
+    const handleDismiss = (id: string) => {
+        setDismissedIds(prev => [...prev, id]);
+    };
+
+    const handleBalanceChange = (val: number) => {
+        saveAndUpdate(transactions, val, region);
+    };
+
+    const handleRegionChange = (val: Region) => {
+        saveAndUpdate(transactions, balance, val);
+    };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-
         setLoading(true);
         try {
             const text = await file.text();
             const newTransactions = await normalizeData(text, region);
-
-            // Merge new uploads with existing (or replace - here we replace for simplicity)
-            setTransactions(newTransactions);
+            const combined = [...newTransactions, ...transactions];
+            saveAndUpdate(combined, balance, region);
         } catch (error) {
             alert("Error parsing CSV.");
-            console.error(error);
         }
         setLoading(false);
     };
 
     const handleAddTransaction = (t: Transaction) => {
-        setTransactions(prev => [t, ...prev]);
+        const updated = [t, ...transactions];
+        saveAndUpdate(updated, balance, region);
+    };
+
+    const handleEditTransaction = (index: number, updatedT: Transaction) => {
+        const updated = [...transactions];
+        updated[index] = updatedT;
+        saveAndUpdate(updated, balance, region);
     };
 
     const handleDeleteTransaction = (index: number) => {
-        setTransactions(prev => prev.filter((_, i) => i !== index));
+        const updated = transactions.filter((_, i) => i !== index);
+        saveAndUpdate(updated, balance, region);
     };
 
     const handleUpdateCategory = (index: number, newCat: Category) => {
-        setTransactions(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], category: newCat };
-            return updated;
-        });
+        const updated = [...transactions];
+        updated[index] = { ...updated[index], category: newCat };
+        saveAndUpdate(updated, balance, region);
     };
 
     const getActionLink = (action: CashFlowAction) => {
@@ -70,95 +220,133 @@ export default function Dashboard() {
         }
     };
 
+    const currency = region === "IN" ? "₹" : "$";
+    const visibleActions = actions.filter(a => !dismissedIds.includes(a.id));
+
+    // Determine Safe/Danger Mode
+    const isCrunch = forecast && forecast.crunchDate !== null;
+    const crunchDatePretty = isCrunch ? new Date(forecast.crunchDate!).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : "";
+
+    if (!isLoaded) return <div className="p-10 text-gray-500 font-mono">Loading CashFlow...</div>;
+
     return (
         <div className="min-h-screen bg-gray-50 p-8 font-sans">
-            {/* HEADER */}
-            <div className="max-w-4xl mx-auto flex justify-between items-center mb-10">
-                <h1 className="text-2xl font-bold text-gray-800">CashFlow+</h1>
-                <div className="flex items-center space-x-2 bg-white p-2 rounded-lg shadow-sm">
-                    <span className="text-sm text-gray-500">Region:</span>
-                    <select
-                        value={region}
-                        onChange={(e) => setRegion(e.target.value as Region)}
-                        className="font-semibold text-blue-600 bg-transparent outline-none cursor-pointer"
-                    >
-                        <option value="IN">India (₹)</option>
-                        <option value="US">USA ($)</option>
-                    </select>
+
+            {/* TUTORIAL MODAL */}
+            {showTutorial && <TutorialModal onClose={closeTutorial} />}
+
+            <div className="max-w-4xl mx-auto flex justify-between items-center mb-8">
+                <div className="flex items-center gap-3">
+                    <Link href="/" className="bg-white p-2 rounded-lg border border-slate-200 hover:border-blue-500 transition-colors" title="Back to Website">
+                        <Home size={20} className="text-slate-500" />
+                    </Link>
+                    <h1 className="text-2xl font-bold text-gray-800">CashFlow+</h1>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                    <button onClick={() => setShowTutorial(true)} className="text-gray-400 hover:text-blue-500 transition-colors" title="Help">
+                        <HelpCircle size={20} />
+                    </button>
+
+                    <div className="flex items-center space-x-2 bg-white p-2 rounded-lg shadow-sm">
+                        <span className="text-sm text-gray-500">Region:</span>
+                        <select value={region} onChange={(e) => handleRegionChange(e.target.value as Region)} className="font-semibold text-blue-600 bg-transparent outline-none cursor-pointer">
+                            <option value="IN">India (₹)</option>
+                            <option value="US">USA ($)</option>
+                        </select>
+                    </div>
+
+                    <button onClick={handleLogout} className="bg-white p-2 rounded-lg text-slate-500 hover:text-red-500 border border-slate-200 hover:border-red-200 transition-all" title="Sign Out">
+                        <LogOut size={18} />
+                    </button>
                 </div>
             </div>
 
             <main className="max-w-4xl mx-auto space-y-8">
 
-                {/* INPUT SECTION */}
+                {/* === 1. HERO STATUS CARD (Always Visible) === */}
+                {isCrunch ? (
+                    // DANGER STATE
+                    <div className="bg-red-50 border-l-8 border-red-500 rounded-xl p-8 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-pulse-slow">
+                        <div>
+                            <span className="bg-red-200 text-red-800 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">Critical Alert</span>
+                            <h2 className="text-3xl font-bold text-red-700 mt-2">Cash Crunch: {crunchDatePretty}</h2>
+                            <p className="text-red-600 mt-1">You will run out of money on this date based on committed expenses.</p>
+                        </div>
+                        <a
+                            href="https://wa.me/?text=Emergency%20Cash%20Crunch%20Meeting%20Request"
+                            target="_blank"
+                            className="bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow hover:bg-red-700 transition-colors whitespace-nowrap"
+                        >
+                            🚨 Alert Investors
+                        </a>
+                    </div>
+                ) : (
+                    // SAFE STATE
+                    <div className="bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl p-8 shadow-lg text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="bg-white/20 text-white text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">Healthy</span>
+                                {forecast && <span className="text-emerald-100 text-sm">Runway: {forecast.runwayMonths} Months</span>}
+                            </div>
+                            <h2 className="text-3xl font-bold">Cash Flow Secure</h2>
+                            {/* Runway End Date */}
+                            {forecast && forecast.runwayEndDate && (
+                                <p className="text-emerald-50 mt-1 text-sm font-medium opacity-90">
+                                    Cash positive until {forecast.runwayEndDate}
+                                </p>
+                            )}
+                        </div>
+                        <div className="text-right">
+                            <div className="text-4xl font-bold opacity-20">✓</div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="grid md:grid-cols-2 gap-6">
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                         <label className="block text-sm font-medium text-gray-500 mb-2">Current Bank Balance</label>
                         <div className="flex items-center">
-                            <span className="text-2xl text-gray-400 mr-2">{region === "IN" ? "₹" : "$"}</span>
-                            <input
-                                type="number"
-                                value={balance}
-                                onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
-                                className="text-3xl font-bold text-gray-800 w-full outline-none placeholder-gray-200"
-                                placeholder="0.00"
-                            />
+                            <span className="text-2xl text-gray-400 mr-2">{currency}</span>
+                            <input type="number" value={balance} onChange={(e) => handleBalanceChange(parseFloat(e.target.value) || 0)} className="text-3xl font-bold text-gray-800 w-full outline-none placeholder-gray-200" placeholder="0.00" />
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative group">
-                        <label className="block text-sm font-medium text-gray-500 mb-2">Upload Tally/QuickBooks CSV</label>
-                        <div className="border-2 border-dashed border-gray-300 rounded-lg h-16 flex items-center justify-center bg-gray-50 group-hover:bg-blue-50 transition-colors cursor-pointer">
-                            <p className="text-gray-400 text-sm group-hover:text-blue-500">
-                                {loading ? "Analyzing..." : "Click to Upload CSV"}
-                            </p>
-                            <input
-                                type="file"
-                                accept=".csv"
-                                onChange={handleFileUpload}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            />
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative group flex flex-col justify-between">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-500 mb-2">Upload Tally/QuickBooks CSV</label>
+                            <div className="border-2 border-dashed border-gray-300 rounded-lg h-16 flex items-center justify-center bg-gray-50 group-hover:bg-blue-50 transition-colors cursor-pointer relative">
+                                <p className="text-gray-400 text-sm group-hover:text-blue-500">{loading ? "Analyzing..." : "Click to Upload CSV"}</p>
+                                <input type="file" accept=".csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                            </div>
+                        </div>
+                        <div className="mt-3 flex justify-between items-center text-xs">
+                            <button onClick={loadDemoData} className="text-blue-600 hover:text-blue-800 font-medium underline">
+                                No CSV? Try Demo Mode
+                            </button>
+                            <span className="text-gray-400 flex items-center">🔒 Secure Client-Side Parsing</span>
                         </div>
                     </div>
                 </div>
 
-                {/* RESULTS SECTION (3 CARDS) */}
-                {actions.length > 0 && (
+                {/* ACTIONS LIST */}
+                {visibleActions.length > 0 && (
                     <div>
-                        <h2 className="text-lg font-semibold text-gray-700 mb-4">Recommended Actions</h2>
+                        <h2 className="text-lg font-semibold text-gray-700 mb-4">Smart Actions</h2>
                         <div className="grid gap-4">
-                            {actions.map((action) => (
-                                <div
-                                    key={action.id}
-                                    className={`p-6 rounded-xl border-l-4 shadow-sm bg-white flex justify-between items-center
-                    ${action.priority === "URGENT" ? "border-red-500" :
-                                            action.priority === "HIGH" ? "border-orange-400" : "border-blue-400"}`}
-                                >
+                            {visibleActions.map((action) => (
+                                <div key={action.id} className={`relative p-6 rounded-xl border-l-4 shadow-sm bg-white flex justify-between items-center ${action.priority === "URGENT" ? "border-red-500" : action.priority === "HIGH" ? "border-orange-400" : "border-blue-400"}`}>
+                                    <button onClick={() => handleDismiss(action.id)} className="absolute top-2 right-2 text-gray-300 hover:text-gray-500" title="Mark as Done">&times;</button>
                                     <div>
                                         <div className="flex items-center space-x-2 mb-1">
-                                            <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase
-                        ${action.priority === "URGENT" ? "bg-red-100 text-red-600" :
-                                                    action.priority === "HIGH" ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"}`}>
-                                                {action.priority}
-                                            </span>
-                                            <h3 className="font-bold text-gray-800">{action.title}</h3>
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded uppercase ${action.priority === "URGENT" ? "bg-red-100 text-red-600" : action.priority === "HIGH" ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"}`}>{action.priority}</span>
+                                            <h3 className="font-bold text-gray-800 ml-2">{action.title}</h3>
                                         </div>
                                         <p className="text-gray-600 text-sm">{action.description}</p>
                                     </div>
-
-                                    <div className="text-right">
-                                        <p className="font-bold text-xl text-gray-800 mb-2">
-                                            {region === "IN" ? "₹" : "$"}{action.amount.toLocaleString()}
-                                        </p>
-                                        <a
-                                            href={getActionLink(action)}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className={`inline-flex items-center text-sm font-medium px-4 py-2 rounded-lg transition-colors
-                        ${action.actionType === "WHATSAPP"
-                                                    ? "bg-green-50 text-green-700 hover:bg-green-100"
-                                                    : "bg-blue-50 text-blue-700 hover:bg-blue-100"}`}
-                                        >
+                                    <div className="text-right mr-6">
+                                        <p className="font-bold text-xl text-gray-800 mb-2">{currency}{Math.abs(action.amount).toLocaleString()}</p>
+                                        <a href={getActionLink(action)} target="_blank" rel="noreferrer" className="inline-flex items-center text-sm font-medium px-4 py-2 rounded-lg transition-colors bg-blue-50 text-blue-700 hover:bg-blue-100">
                                             {action.actionType === "WHATSAPP" ? "📱 WhatsApp" : "📧 Email"}
                                         </a>
                                     </div>
@@ -168,15 +356,14 @@ export default function Dashboard() {
                     </div>
                 )}
 
-                {/* NEW TRANSACTION TRACKER */}
                 <TransactionTable
                     transactions={transactions}
                     region={region}
                     onAddTransaction={handleAddTransaction}
                     onDeleteTransaction={handleDeleteTransaction}
                     onUpdateCategory={handleUpdateCategory}
+                    onEditTransaction={handleEditTransaction}
                 />
-
             </main>
         </div>
     );
