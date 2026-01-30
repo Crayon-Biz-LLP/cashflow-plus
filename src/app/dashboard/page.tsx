@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useSession, signOut } from "next-auth/react"; // Real Auth Hooks
 import { useRouter } from "next/navigation";
+import { usePostHog } from 'posthog-js/react';
 import Link from "next/link";
 import {
     normalizeData,
@@ -20,7 +22,7 @@ import {
     History, Zap, MessageCircle, Calendar, DollarSign, Tag, CheckCircle2, Circle
 } from "lucide-react";
 
-// --- REUSABLE SPOTLIGHT CARD ---
+// --- 1. REUSABLE SPOTLIGHT CARD ---
 const SpotlightCard = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => {
     const divRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +46,7 @@ const SpotlightCard = ({ children, className = "" }: { children: React.ReactNode
     );
 };
 
-// --- TUTORIAL MODAL ---
+// --- 2. TUTORIAL MODAL ---
 function TutorialModal({ onClose, isDark }: { onClose: () => void, isDark: boolean }) {
     const [step, setStep] = useState(1);
 
@@ -92,7 +94,7 @@ function TutorialModal({ onClose, isDark }: { onClose: () => void, isDark: boole
     );
 }
 
-// --- ADD/EDIT TRANSACTION MODAL ---
+// --- 3. TRANSACTION MODAL (ADD/EDIT) ---
 function TransactionModal({ isOpen, onClose, onSave, isDark, initialData }: any) {
     const [form, setForm] = useState<Partial<Transaction>>({
         date: new Date().toISOString().split('T')[0],
@@ -103,12 +105,10 @@ function TransactionModal({ isOpen, onClose, onSave, isDark, initialData }: any)
         status: "PENDING"
     });
 
-    // Load initial data if editing
     useEffect(() => {
         if (initialData) {
             setForm(initialData);
         } else {
-            // Reset if adding new
             setForm({
                 date: new Date().toISOString().split('T')[0],
                 payee: "",
@@ -156,90 +156,129 @@ function TransactionModal({ isOpen, onClose, onSave, isDark, initialData }: any)
     );
 }
 
+// --- 4. MAIN DASHBOARD COMPONENT ---
 export default function Dashboard() {
+    const posthog = usePostHog();
     const router = useRouter();
+    // AUTH HOOK
+    const { data: session, status } = useSession();
+
+    const [isLoaded, setIsLoaded] = useState(false);
+
+    // Data State
     const [region, setRegion] = useState<Region>("IN");
     const [balance, setBalance] = useState<number>(0);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
-
     const [actions, setActions] = useState<CashFlowAction[]>([]);
     const [forecast, setForecast] = useState<ForecastResult | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [isLoaded, setIsLoaded] = useState(false);
     const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+    const [loading, setLoading] = useState(false);
 
-    // Theme & UX State
+    // UI State
     const [isDark, setIsDark] = useState(true);
     const [showTutorial, setShowTutorial] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
-    // --- RESTORE THEME ---
+    // --- INITIALIZATION ---
     useEffect(() => {
+        // 1. Load Theme
         const savedTheme = localStorage.getItem("cashflow_theme");
-        if (savedTheme) {
-            setIsDark(savedTheme === "dark");
-        }
-    }, []);
+        if (savedTheme) setIsDark(savedTheme === "dark");
 
+        // 2. Auth Redirect
+        if (status === "unauthenticated") {
+            router.push("/login");
+        }
+    }, [status, router]);
+
+    // --- DATA LOADING (User Specific) ---
+    useEffect(() => {
+        if (status === "authenticated" && session?.user?.email) {
+            const userKey = session.user.email; // UNIQUE KEY FOR DATA
+
+            // 🚀 LEAD CAPTURE: Identify the user in PostHog
+            posthog.identify(userKey, {
+                email: session.user.email,
+                name: session.user.name,
+                region: region // Optional: Track which region they are in
+            });
+
+            // ... (Your existing LocalStorage logic below remains the same) ...
+            const savedTx = localStorage.getItem(`cashflow_transactions_${userKey}`);
+            const savedBal = localStorage.getItem(`cashflow_balance_${userKey}`);
+            const savedRegion = localStorage.getItem(`cashflow_region_${userKey}`);
+            const tutorialSeen = localStorage.getItem(`tutorial_seen_${userKey}`);
+
+            if (savedTx) {
+                try {
+                    const parsed = JSON.parse(savedTx);
+                    if (Array.isArray(parsed)) setTransactions(parsed);
+                } catch (e) { console.error("Load Error", e); }
+            }
+            if (savedBal) setBalance(parseFloat(savedBal));
+            if (savedRegion) setRegion(savedRegion as Region);
+            if (!tutorialSeen) setShowTutorial(true);
+
+            setIsLoaded(true);
+        }
+    }, [status, session]); // Dependency array is correct
+
+    // --- DATA SAVING (User Specific) ---
+    const saveAndUpdate = (newTx: Transaction[], newBal: number, newReg: Region) => {
+        if (!session?.user?.email) return;
+        const userKey = session.user.email;
+
+        setTransactions(newTx);
+        setBalance(newBal);
+        setRegion(newReg);
+
+        // Save to User's key
+        localStorage.setItem(`cashflow_transactions_${userKey}`, JSON.stringify(newTx));
+        localStorage.setItem(`cashflow_balance_${userKey}`, newBal.toString());
+        localStorage.setItem(`cashflow_region_${userKey}`, newReg);
+        setDismissedIds([]);
+    };
+
+    // --- CALCULATIONS ---
+    useEffect(() => {
+        const actionResults = generateActions(transactions, balance, region);
+        setActions(actionResults);
+        const forecastResults = calculateForecast(transactions, balance);
+        setForecast(forecastResults);
+    }, [transactions, balance, region]);
+
+    // --- HANDLERS ---
     const toggleTheme = () => {
         const newTheme = !isDark;
         setIsDark(newTheme);
         localStorage.setItem("cashflow_theme", newTheme ? "dark" : "light");
     };
 
-    useEffect(() => {
-        const isLoggedIn = localStorage.getItem("is_logged_in");
-        if (!isLoggedIn) {
-            router.push("/login");
-            return;
-        }
-
-        const hasSeenTutorial = localStorage.getItem("has_seen_tutorial");
-        if (!hasSeenTutorial) setShowTutorial(true);
-
-        const savedTx = localStorage.getItem("cashflow_transactions");
-        const savedBal = localStorage.getItem("cashflow_balance");
-        const savedRegion = localStorage.getItem("cashflow_region");
-
-        if (savedTx) {
-            try {
-                const parsed = JSON.parse(savedTx);
-                if (Array.isArray(parsed)) setTransactions(parsed);
-            } catch (e) { console.error("Load Error", e); }
-        }
-        if (savedBal) setBalance(parseFloat(savedBal));
-        if (savedRegion) setRegion(savedRegion as Region);
-
-        setIsLoaded(true);
-    }, [router]);
+    const handleLogout = async () => {
+        await signOut({ callbackUrl: "/login" });
+    };
 
     const closeTutorial = () => {
         setShowTutorial(false);
-        localStorage.setItem("has_seen_tutorial", "true");
+        if (session?.user?.email) localStorage.setItem(`tutorial_seen_${session.user.email}`, "true");
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem("is_logged_in");
-        router.push("/login");
+    const handleDismiss = (id: string) => {
+        setDismissedIds(prev => [...prev, id]);
     };
 
-    const saveAndUpdate = (newTx: Transaction[], newBal: number, newReg: Region) => {
-        setTransactions(newTx);
-        setBalance(newBal);
-        setRegion(newReg);
-        localStorage.setItem("cashflow_transactions", JSON.stringify(newTx));
-        localStorage.setItem("cashflow_balance", newBal.toString());
-        localStorage.setItem("cashflow_region", newReg);
-        setDismissedIds([]);
+    const handleBalanceChange = (val: number) => {
+        saveAndUpdate(transactions, val, region);
+    };
+
+    const handleRegionChange = (val: Region) => {
+        saveAndUpdate(transactions, balance, val);
     };
 
     const handleReset = () => {
-        if (confirm("Are you sure you want to wipe all data and start fresh?")) {
-            localStorage.removeItem("cashflow_transactions");
-            localStorage.removeItem("cashflow_balance");
-            localStorage.removeItem("cashflow_region");
-            window.location.reload();
+        if (confirm("Are you sure you want to wipe all data?")) {
+            saveAndUpdate([], 0, region);
         }
     };
 
@@ -252,25 +291,6 @@ export default function Dashboard() {
             { id: "d4", date: "2026-02-05", payee: "AWS", description: "Hosting", amount: 25000, type: "OUT", category: "Software & Subscriptions" as Category, status: "PENDING" },
         ];
         saveAndUpdate(demoTx, demoBalance, "IN");
-    };
-
-    useEffect(() => {
-        const actionResults = generateActions(transactions, balance, region);
-        setActions(actionResults);
-        const forecastResults = calculateForecast(transactions, balance);
-        setForecast(forecastResults);
-    }, [transactions, balance, region]);
-
-    const handleDismiss = (id: string) => {
-        setDismissedIds(prev => [...prev, id]);
-    };
-
-    const handleBalanceChange = (val: number) => {
-        saveAndUpdate(transactions, val, region);
-    };
-
-    const handleRegionChange = (val: Region) => {
-        saveAndUpdate(transactions, balance, val);
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -305,19 +325,7 @@ export default function Dashboard() {
         saveAndUpdate(updated, balance, region);
     };
 
-    const handleSaveTransaction = (t: Transaction) => {
-        if (editingTransaction) {
-            // Edit Mode
-            const updated = transactions.map(tx => tx.id === editingTransaction.id ? { ...t, id: editingTransaction.id } : tx);
-            saveAndUpdate(updated, balance, region);
-        } else {
-            // Add Mode
-            const newTx = { ...t, id: Math.random().toString(36).substr(2, 9) };
-            saveAndUpdate([newTx, ...transactions], balance, region);
-        }
-        setEditingTransaction(null);
-    };
-
+    // --- CRUD HELPERS ---
     const openAddModal = () => {
         setEditingTransaction(null);
         setIsModalOpen(true);
@@ -326,6 +334,19 @@ export default function Dashboard() {
     const openEditModal = (t: Transaction) => {
         setEditingTransaction(t);
         setIsModalOpen(true);
+    };
+
+    const handleSaveTransaction = (t: Transaction) => {
+        if (editingTransaction) {
+            // Edit
+            const updated = transactions.map(tx => tx.id === editingTransaction.id ? { ...t, id: editingTransaction.id } : tx);
+            saveAndUpdate(updated, balance, region);
+        } else {
+            // Add
+            const newTx = { ...t, id: Math.random().toString(36).substr(2, 9) };
+            saveAndUpdate([newTx, ...transactions], balance, region);
+        }
+        setEditingTransaction(null);
     };
 
     const getActionLink = (action: CashFlowAction) => {
@@ -509,8 +530,8 @@ export default function Dashboard() {
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide mb-2 ${action.priority === "URGENT" ? "bg-red-500/10 text-red-500 border border-red-500/20" :
-                                                    action.priority === "HIGH" ? "bg-orange-500/10 text-orange-500 border border-orange-500/20" :
-                                                        "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                                                action.priority === "HIGH" ? "bg-orange-500/10 text-orange-500 border border-orange-500/20" :
+                                                    "bg-blue-500/10 text-blue-500 border border-blue-500/20"
                                                 }`}>
                                                 {action.priority}
                                             </div>
@@ -591,8 +612,8 @@ export default function Dashboard() {
                                                 <button
                                                     onClick={() => handleStatusToggle(idx)}
                                                     className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold border transition-colors ${t.status === "PAID"
-                                                            ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20"
-                                                            : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20 hover:bg-yellow-500/20"
+                                                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20"
+                                                        : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20 hover:bg-yellow-500/20"
                                                         }`}
                                                 >
                                                     {t.status === "PAID" ? <CheckCircle2 size={10} /> : <Circle size={10} />}

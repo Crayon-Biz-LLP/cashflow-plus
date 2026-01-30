@@ -1,133 +1,61 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+// FIX: Use real NextAuth signIn
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, Loader2, Lock, BrainCircuit, Moon, Sun } from "lucide-react";
 
+// --- REUSED PARTICLE CANVAS ---
 const ParticleCanvas = ({ isDark }: { isDark: boolean }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-
+    // ... (Keep the exact same particle logic from previous step to save space) ...
+    // If you need the full particle code again, copy it from the previous turn's Login Page.
+    // For brevity, assuming ParticleCanvas logic is here.
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-
         let width = (canvas.width = window.innerWidth);
         let height = (canvas.height = window.innerHeight);
         let particles: any[] = [];
         let animationFrameId: number;
-
-        const config = {
-            particleCount: 60,
-            mouseRadius: 150,
-            baseColor: isDark ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.1)",
-            highlightColor: "rgba(249, 115, 22, 0.6)",
-            lineColor: "rgba(249, 115, 22, 0.15)",
-        };
-
+        const config = { particleCount: 60, mouseRadius: 150, baseColor: isDark ? "rgba(255, 255, 255, 0.2)" : "rgba(0, 0, 0, 0.1)", highlightColor: "rgba(249, 115, 22, 0.6)", lineColor: "rgba(249, 115, 22, 0.15)" };
         const mouse = { x: -1000, y: -1000 };
-
         class Particle {
             x: number; y: number; vx: number; vy: number; size: number; baseAlpha: number; currentAlpha: number;
-            constructor() {
-                this.x = Math.random() * width;
-                this.y = Math.random() * height;
-                this.vx = (Math.random() - 0.5) * 0.3;
-                this.vy = (Math.random() - 0.5) * 0.3;
-                this.size = Math.random() * 1.5;
-                this.baseAlpha = Math.random() * 0.3 + 0.1;
-                this.currentAlpha = this.baseAlpha;
-            }
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                if (this.x < 0 || this.x > width) this.vx *= -1;
-                if (this.y < 0 || this.y > height) this.vy *= -1;
-
-                const dx = mouse.x - this.x;
-                const dy = mouse.y - this.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < config.mouseRadius) {
-                    this.currentAlpha = Math.min(this.baseAlpha + 0.5, 1);
-                    ctx!.beginPath();
-                    ctx!.strokeStyle = config.lineColor;
-                    ctx!.lineWidth = 0.5;
-                    ctx!.moveTo(this.x, this.y);
-                    ctx!.lineTo(mouse.x, mouse.y);
-                    ctx!.stroke();
-                    ctx!.fillStyle = config.highlightColor;
-                } else {
-                    this.currentAlpha = this.baseAlpha;
-                    ctx!.fillStyle = config.baseColor;
-                }
-            }
-            draw() {
-                ctx!.globalAlpha = this.currentAlpha;
-                ctx!.beginPath();
-                ctx!.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx!.fill();
-            }
+            constructor() { this.x = Math.random() * width; this.y = Math.random() * height; this.vx = (Math.random() - 0.5) * 0.3; this.vy = (Math.random() - 0.5) * 0.3; this.size = Math.random() * 1.5; this.baseAlpha = Math.random() * 0.3 + 0.1; this.currentAlpha = this.baseAlpha; }
+            update() { this.x += this.vx; this.y += this.vy; if (this.x < 0 || this.x > width) this.vx *= -1; if (this.y < 0 || this.y > height) this.vy *= -1; const dx = mouse.x - this.x; const dy = mouse.y - this.y; const distance = Math.sqrt(dx * dx + dy * dy); if (distance < config.mouseRadius) { this.currentAlpha = Math.min(this.baseAlpha + 0.5, 1); ctx!.beginPath(); ctx!.strokeStyle = config.lineColor; ctx!.lineWidth = 0.5; ctx!.moveTo(this.x, this.y); ctx!.lineTo(mouse.x, mouse.y); ctx!.stroke(); ctx!.fillStyle = config.highlightColor; } else { this.currentAlpha = this.baseAlpha; ctx!.fillStyle = config.baseColor; } }
+            draw() { ctx!.globalAlpha = this.currentAlpha; ctx!.beginPath(); ctx!.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx!.fill(); }
         }
-
-        const init = () => {
-            particles = [];
-            for (let i = 0; i < config.particleCount; i++) {
-                particles.push(new Particle());
-            }
-        };
-
-        const animate = () => {
-            ctx.clearRect(0, 0, width, height);
-            particles.forEach((p) => {
-                p.update();
-                p.draw();
-            });
-            animationFrameId = requestAnimationFrame(animate);
-        };
-
-        const handleResize = () => {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
-            init();
-        };
-
-        const handleMouseMove = (e: MouseEvent) => {
-            mouse.x = e.clientX;
-            mouse.y = e.clientY;
-        };
-
-        window.addEventListener("resize", handleResize);
-        window.addEventListener("mousemove", handleMouseMove);
-        init();
-        animate();
-
-        return () => {
-            window.removeEventListener("resize", handleResize);
-            window.removeEventListener("mousemove", handleMouseMove);
-            cancelAnimationFrame(animationFrameId);
-        };
+        const init = () => { particles = []; for (let i = 0; i < config.particleCount; i++) { particles.push(new Particle()); } };
+        const animate = () => { ctx.clearRect(0, 0, width, height); particles.forEach((p) => { p.update(); p.draw(); }); animationFrameId = requestAnimationFrame(animate); };
+        const handleResize = () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; init(); };
+        const handleMouseMove = (e: MouseEvent) => { mouse.x = e.clientX; mouse.y = e.clientY; };
+        window.addEventListener("resize", handleResize); window.addEventListener("mousemove", handleMouseMove); init(); animate();
+        return () => { window.removeEventListener("resize", handleResize); window.removeEventListener("mousemove", handleMouseMove); cancelAnimationFrame(animationFrameId); };
     }, [isDark]);
-
     return <canvas ref={canvasRef} className="fixed top-0 left-0 w-full h-full -z-10 pointer-events-none" />;
 };
 
 export default function LoginPage() {
     const router = useRouter();
+    const { data: session, status } = useSession();
     const [email, setEmail] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     const [isDark, setIsDark] = useState(true);
+    const [isLoading, setIsLoading] = useState(false);
 
-    // --- RESTORE THEME ---
     useEffect(() => {
         const savedTheme = localStorage.getItem("cashflow_theme");
-        if (savedTheme) {
-            setIsDark(savedTheme === "dark");
+        if (savedTheme) setIsDark(savedTheme === "dark");
+
+        // Auto-redirect if already logged in
+        if (status === "authenticated") {
+            router.push("/dashboard");
         }
-    }, []);
+    }, [status, router]);
 
     const toggleTheme = () => {
         const newTheme = !isDark;
@@ -135,25 +63,21 @@ export default function LoginPage() {
         localStorage.setItem("cashflow_theme", newTheme ? "dark" : "light");
     };
 
-    const handleLogin = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!email) return;
-
-        setIsLoading(true);
-        setTimeout(() => {
-            localStorage.setItem("user_email", email);
-            localStorage.setItem("is_logged_in", "true");
-            router.push("/dashboard");
-        }, 1500);
+    const handleGoogleLogin = () => {
+        // REAL GOOGLE LOGIN
+        signIn("google", { callbackUrl: "/dashboard" });
     };
 
-    const handleGoogleLogin = () => {
-        setIsGoogleLoading(true);
+    const handleEmailLogin = (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsLoading(true);
+        // Note: Email/Password requires a database adapter usually. 
+        // For now, we simulate email login or you can add CredentialsProvider later.
+        // We will simulate it for now to match the "Google is primary" request.
         setTimeout(() => {
-            localStorage.setItem("user_email", "demo-google-user@gmail.com");
-            localStorage.setItem("is_logged_in", "true");
-            router.push("/dashboard");
-        }, 1500);
+            alert("For the Beta, please use 'Continue with Google'.");
+            setIsLoading(false);
+        }, 1000);
     };
 
     return (
@@ -161,17 +85,13 @@ export default function LoginPage() {
 
             <ParticleCanvas isDark={isDark} />
 
-            {/* Background Gradients */}
             <div className={`fixed inset-0 pointer-events-none ${isDark ? '' : 'opacity-50'}`}>
                 <div className="absolute top-[20%] left-[20%] w-[500px] h-[500px] bg-orange-500/10 blur-[120px] rounded-full"></div>
                 <div className="absolute bottom-[20%] right-[20%] w-[400px] h-[400px] bg-amber-500/10 blur-[100px] rounded-full"></div>
             </div>
 
             <div className="absolute top-6 right-6 z-50">
-                <button
-                    onClick={toggleTheme}
-                    className={`p-2 rounded-full transition-colors ${isDark ? 'text-zinc-400 hover:text-white bg-white/5' : 'text-zinc-500 hover:text-black bg-zinc-200'}`}
-                >
+                <button onClick={toggleTheme} className={`p-2 rounded-full transition-colors ${isDark ? 'text-zinc-400 hover:text-white bg-white/5' : 'text-zinc-500 hover:text-black bg-zinc-200'}`}>
                     {isDark ? <Sun size={20} /> : <Moon size={20} />}
                 </button>
             </div>
@@ -193,13 +113,12 @@ export default function LoginPage() {
                 {/* GOOGLE BUTTON */}
                 <button
                     onClick={handleGoogleLogin}
-                    disabled={isGoogleLoading}
                     className={`w-full flex items-center justify-center gap-3 p-3 rounded-xl font-medium transition-all mb-6 relative border ${isDark
                             ? 'bg-white text-black hover:bg-zinc-200 border-transparent'
                             : 'bg-white text-black border-zinc-200 hover:bg-zinc-50'
                         }`}
                 >
-                    {isGoogleLoading ? (
+                    {status === "loading" ? (
                         <Loader2 className="animate-spin text-zinc-400" />
                     ) : (
                         <>
@@ -219,7 +138,7 @@ export default function LoginPage() {
                 </div>
 
                 {/* EMAIL FORM */}
-                <form onSubmit={handleLogin} className="space-y-4">
+                <form onSubmit={handleEmailLogin} className="space-y-4">
                     <div>
                         <label className={`block text-xs font-medium mb-1.5 ml-1 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>Work Email</label>
                         <input
@@ -247,13 +166,6 @@ export default function LoginPage() {
                     <Lock size={10} /> Secure 256-bit Encryption
                 </p>
             </div>
-
-            <div className="mt-8 text-center space-y-2">
-                <div className="flex items-center justify-center gap-2 text-sm text-zinc-500">
-                    <CheckCircle2 size={14} className="text-orange-500" /> No credit card required
-                </div>
-            </div>
-
         </div>
     );
 }
