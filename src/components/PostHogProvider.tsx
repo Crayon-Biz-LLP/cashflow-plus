@@ -1,21 +1,46 @@
 'use client'
 import posthog from 'posthog-js'
 import { PostHogProvider } from 'posthog-js/react'
-import { useEffect } from 'react'
+import { usePathname, useSearchParams } from "next/navigation"
+import { useEffect, Suspense } from "react"
 
 if (typeof window !== 'undefined') {
     posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
         api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-        person_profiles: 'identified_only', // Don't track anonymous users as "people" to save money
-        capture_pageview: false // We handle this manually in Next.js
+        person_profiles: 'identified_only',
+        capture_pageview: false // We capture manually below to handle Next.js routing
     })
 }
 
-export function CSPostHogProvider({ children }: { children: React.ReactNode }) {
-    useEffect(() => {
-        // Track page views
-        posthog.capture('$pageview');
-    }, []);
+// Internal component to track route changes
+function PostHogPageView() {
+    const pathname = usePathname()
+    const searchParams = useSearchParams()
 
-    return <PostHogProvider client={posthog}>{children}</PostHogProvider>
+    useEffect(() => {
+        if (pathname) {
+            let url = window.origin + pathname
+            if (searchParams && searchParams.toString()) {
+                url = url + `?${searchParams.toString()}`
+            }
+            // 🚀 TRACK PAGE VIEW ON NAVIGATION
+            posthog.capture('$pageview', {
+                '$current_url': url,
+            })
+        }
+    }, [pathname, searchParams])
+
+    return null
+}
+
+export function CSPostHogProvider({ children }: { children: React.ReactNode }) {
+    return (
+        <PostHogProvider client={posthog}>
+            {/* Wrap in Suspense to prevent hydration errors */}
+            <Suspense fallback={null}>
+                <PostHogPageView />
+            </Suspense>
+            {children}
+        </PostHogProvider>
+    )
 }
