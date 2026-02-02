@@ -6,9 +6,11 @@ import { useEffect, Suspense } from "react"
 
 if (typeof window !== 'undefined') {
     posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
-        api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+        // 🚀 CHANGE THIS: Point to your local proxy instead of the env var
+        api_host: `${window.location.origin}/ingest`,
         person_profiles: 'identified_only',
-        capture_pageview: false // We capture manually below to handle Next.js routing
+        capture_pageview: false,
+        ui_host: 'https://us.posthog.com' // Keep the UI pointing to the real PostHog
     })
 }
 
