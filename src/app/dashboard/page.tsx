@@ -192,19 +192,35 @@ export default function Dashboard() {
         }
     }, [status, router]);
 
-    // --- DATA LOADING (User Specific) ---
+    // --- DATA LOADING & TRACKING ---
     useEffect(() => {
+        // DEBUG: Check if this effect is even running
+        console.log("Dashboard Loaded. Auth Status:", status);
+
         if (status === "authenticated" && session?.user?.email) {
-            const userKey = session.user.email; // UNIQUE KEY FOR DATA
+            const userKey = session.user.email;
 
-            // 🚀 LEAD CAPTURE: Identify the user in PostHog
-            posthog.identify(userKey, {
-                email: session.user.email,
-                name: session.user.name,
-                region: region // Optional: Track which region they are in
-            });
+            // 🚀 DEBUG: Check if we have the user data
+            console.log("User Found:", userKey);
+            console.log("PostHog Instance:", posthog);
 
-            // ... (Your existing LocalStorage logic below remains the same) ...
+            if (posthog) {
+                try {
+                    // 🚀 LEAD CAPTURE
+                    posthog.identify(userKey, {
+                        email: session.user.email,
+                        name: session.user.name,
+                        region: region
+                    });
+                    console.log("✅ PostHog Identify Sent for:", userKey);
+                } catch (err) {
+                    console.error("❌ PostHog Error:", err);
+                }
+            } else {
+                console.warn("⚠️ PostHog not initialized yet");
+            }
+
+            // ... (Your existing LocalStorage logic below) ...
             const savedTx = localStorage.getItem(`cashflow_transactions_${userKey}`);
             const savedBal = localStorage.getItem(`cashflow_balance_${userKey}`);
             const savedRegion = localStorage.getItem(`cashflow_region_${userKey}`);
@@ -222,7 +238,7 @@ export default function Dashboard() {
 
             setIsLoaded(true);
         }
-    }, [status, session]); // Dependency array is correct
+    }, [status, session, posthog]); // Added posthog to dependencies
 
     // --- DATA SAVING (User Specific) ---
     const saveAndUpdate = (newTx: Transaction[], newBal: number, newReg: Region) => {
