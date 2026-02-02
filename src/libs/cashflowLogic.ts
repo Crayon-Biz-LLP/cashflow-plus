@@ -5,6 +5,13 @@ import Papa from "papaparse";
 export type Region = "IN" | "US";
 export type TransactionStatus = "PAID" | "PENDING";
 
+// 🚀 FIX: Added missing ChartDataPoint interface for the graph
+export interface ChartDataPoint {
+    date: string;
+    balance: number;
+    type?: 'actual' | 'projected';
+}
+
 export type Category =
     | "Payroll & Team"
     | "Taxes & Compliance"
@@ -170,9 +177,6 @@ export const generateActions = (
     region: Region
 ): CashFlowAction[] => {
     const actions: CashFlowAction[] = [];
-
-    // LOGIC FIX: For Alerts, we calculate Real Balance first (ALL PAID)
-    // Then we simulate the future timeline
     let realBalance = currentBalance;
 
     // 1. Apply ALL PAID items (Past or Future)
@@ -190,9 +194,6 @@ export const generateActions = (
     const pendingIn = futurePendingTx.filter(t => t.type === "IN").reduce((acc, t) => acc + t.amount, 0);
     const pendingOut = futurePendingTx.filter(t => t.type === "OUT").reduce((acc, t) => acc + t.amount, 0);
 
-    // Conservative Projection: We assume Pending OUT happens, but Pending IN might not?
-    // Actually for the "Alert", we usually show the "Net" result.
-    // Let's stick to the standard: Current Real Balance + Pending In - Pending Out
     const projectedBalance = realBalance + pendingIn - pendingOut;
 
     // ACTION: Cash Crunch (Using Timetravel)
@@ -272,7 +273,6 @@ export const calculateForecast = (transactions: Transaction[], currentBalance: n
     const recurringItems: string[] = [];
 
     // 1. CALCULATE EFFECTIVE BALANCE
-    // CRITICAL FIX: Use ALL transactions for the balance check, regardless of date.
     let effectiveRunwayBalance = currentBalance;
 
     transactions.forEach(t => {
@@ -286,7 +286,6 @@ export const calculateForecast = (transactions: Transaction[], currentBalance: n
     });
 
     // 2. CRUNCH DATE LOGIC
-    // We only simulate PENDING transactions that are in the FUTURE (or Today)
     const futurePendingTx = transactions.filter(t => t.status === "PENDING" && isFutureOrToday(t.date));
     const sortedTx = [...futurePendingTx].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
