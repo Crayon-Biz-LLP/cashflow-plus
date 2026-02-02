@@ -1,4 +1,3 @@
-// src/components/CashFlowChart.tsx
 import React from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { ChartDataPoint } from "@/libs/cashflowLogic";
@@ -7,54 +6,71 @@ interface Props {
     data: ChartDataPoint[];
 }
 
-export default function CashFlowChart({ data }: Props) {
-    // Find minimum value to set scale
-    const minBalance = Math.min(...data.map(d => d.balance));
-    const hasCrunch = minBalance < 0;
+const CashFlowChart: React.FC<Props> = ({ data }) => {
+    // Determine min/max for domain scaling
+    const balances = data.map(d => d.balance);
+    const minBalance = Math.min(...balances, 0); // Ensure 0 is visible
+    const maxBalance = Math.max(...balances, 0);
+
+    // Calculate gradient offsets if we want green/red (Optional polish)
+    const offset = maxBalance > 0 ? maxBalance / (maxBalance - minBalance) : 0;
 
     return (
-        <div className="h-64 w-full bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <h3 className="text-sm font-bold text-gray-500 mb-4 uppercase tracking-wider">Projected Cash Balance</h3>
-            <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+        <div style={{ width: '100%', height: 300 }}>
+            <ResponsiveContainer>
+                <AreaChart
+                    data={data}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                >
                     <defs>
-                        <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        <linearGradient id="splitColor" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset={offset} stopColor="#10b981" stopOpacity={0.3} />
+                            <stop offset={offset} stopColor="#ef4444" stopOpacity={0.3} />
                         </linearGradient>
-                        <linearGradient id="colorDanger" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.1} />
-                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                        <linearGradient id="colorLine" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset={offset} stopColor="#10b981" stopOpacity={1} />
+                            <stop offset={offset} stopColor="#ef4444" stopOpacity={1} />
                         </linearGradient>
                     </defs>
 
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
                     <XAxis
                         dataKey="date"
-                        tick={{ fontSize: 10 }}
                         tickFormatter={(str) => {
                             const d = new Date(str);
                             return `${d.getDate()}/${d.getMonth() + 1}`;
                         }}
+                        style={{ fontSize: '12px', opacity: 0.7 }}
                     />
-                    <YAxis hide domain={[Math.min(0, minBalance), 'auto']} />
+                    <YAxis hide domain={[minBalance * 1.1, maxBalance * 1.1]} />
+
                     <Tooltip
-                        formatter={(value: number) => [value.toLocaleString(), "Balance"]}
+                        // 🚀 FIX IS HERE: Type as 'any' to prevent build error
+                        formatter={(value: any) => [Number(value).toLocaleString(), "Balance"]}
                         labelFormatter={(label) => new Date(label).toLocaleDateString()}
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                        contentStyle={{
+                            borderRadius: '8px',
+                            border: '1px solid #333',
+                            backgroundColor: '#000',
+                            color: '#fff',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                        }}
                     />
 
-                    <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="3 3" />
+                    <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
 
                     <Area
                         type="monotone"
                         dataKey="balance"
-                        stroke={hasCrunch ? "#ef4444" : "#3b82f6"}
-                        fillOpacity={1}
-                        fill={hasCrunch ? "url(#colorDanger)" : "url(#colorBal)"}
+                        stroke="url(#colorLine)"
+                        fill="url(#splitColor)"
+                        strokeWidth={2}
+                        animationDuration={1500}
                     />
                 </AreaChart>
             </ResponsiveContainer>
         </div>
     );
-}
+};
+
+export default CashFlowChart;
