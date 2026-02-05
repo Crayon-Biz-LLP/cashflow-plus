@@ -99,64 +99,71 @@ export const normalizeData = (csvText: string, region: Region): Promise<Transact
             skipEmptyLines: true,
             complete: (results: any) => {
                 const rawData = results.data as any[];
-                const normalized: Transaction[] = rawData.map((row, idx) => {
-                    let payee = "Unknown", description = "", amount = 0, type: "IN" | "OUT" = "OUT";
-                    let date = new Date().toISOString();
-                    let category: Category | "Auto" = "Auto";
-                    let status: TransactionStatus = "PENDING";
+                const normalized: Transaction[] = rawData
+                    .filter((row: any) => {
+                        // 1. Filter out empty lines or instruction rows (Amount is key)
+                        if (!row["Amount"]) return false;
+                        const amtStr = row["Amount"].toString().replace(/,/g, "");
+                        return !isNaN(parseFloat(amtStr));
+                    })
+                    .map((row, idx) => {
+                        let payee = "Unknown", description = "", amount = 0, type: "IN" | "OUT" = "OUT";
+                        let date = new Date().toISOString();
+                        let category: Category | "Auto" = "Auto";
+                        let status: TransactionStatus = "PENDING";
 
-                    const safeParse = (val: any) => {
-                        if (typeof val === "number") return val;
-                        if (!val) return 0;
-                        return parseFloat(val.toString().replace(/,/g, ""));
-                    };
+                        const safeParse = (val: any) => {
+                            if (typeof val === "number") return val;
+                            if (!val) return 0;
+                            return parseFloat(val.toString().replace(/,/g, ""));
+                        };
 
-                    if (row["Payee"] || row["Category"]) {
-                        payee = row["Payee"] || "Unknown";
-                        description = row["Description"] || "";
-                        const amtRaw = safeParse(row["Amount"]);
-                        amount = Math.abs(amtRaw);
-                        type = (row["Type"] && row["Type"].toUpperCase() === "IN") ? "IN" : "OUT";
-                        date = row["Date"] || date;
-                        if (row["Category"] && Object.keys(CATEGORY_RULES).includes(row["Category"])) {
-                            category = row["Category"] as Category;
+                        if (row["Payee"] || row["Category"]) {
+                            payee = row["Payee"] || "Unknown";
+                            description = row["Description"] || "";
+                            const amtRaw = safeParse(row["Amount"]);
+                            amount = Math.abs(amtRaw);
+                            type = (row["Type"] && row["Type"].toUpperCase() === "IN") ? "IN" : "OUT";
+                            date = row["Date"] || date;
+                            if (row["Category"] && Object.keys(CATEGORY_RULES).includes(row["Category"])) {
+                                category = row["Category"] as Category;
+                            }
+                            if (row["Status"] && (row["Status"].toUpperCase() === "PAID")) {
+                                status = "PAID";
+                            }
                         }
-                        if (row["Status"] && (row["Status"].toUpperCase() === "PAID")) {
-                            status = "PAID";
+                        else if (region === "IN") {
+                            payee = row["Party Name"] || row["Particulars"] || "Unknown";
+                            description = row["Vch Type"] || "";
+                            const amtRaw = safeParse(row["Amount"]);
+                            amount = Math.abs(amtRaw);
+                            type = row["Vch Type"] && row["Vch Type"].includes("Receipt") ? "IN" : "OUT";
+                            date = row["Date"] || date;
                         }
-                    }
-                    else if (region === "IN") {
-                        payee = row["Party Name"] || row["Particulars"] || "Unknown";
-                        description = row["Vch Type"] || "";
-                        const amtRaw = safeParse(row["Amount"]);
-                        amount = Math.abs(amtRaw);
-                        type = row["Vch Type"] && row["Vch Type"].includes("Receipt") ? "IN" : "OUT";
-                        date = row["Date"] || date;
-                    }
-                    else {
-                        payee = row["Name"] || "Unknown";
-                        description = row["Memo/Description"] || "";
-                        const amtRaw = safeParse(row["Amount"]);
-                        amount = Math.abs(amtRaw);
-                        type = amtRaw > 0 ? "IN" : "OUT";
-                        date = row["Date"] || date;
-                    }
+                        else {
+                            payee = row["Name"] || "Unknown";
+                            description = row["Memo/Description"] || "";
+                            const amtRaw = safeParse(row["Amount"]);
+                            amount = Math.abs(amtRaw);
+                            type = amtRaw > 0 ? "IN" : "OUT";
+                            date = row["Date"] || date;
+                        }
 
-                    const finalCategory = category !== "Auto"
-                        ? category
-                        : guessCategory(payee + " " + description, type);
+                        const finalCategory = category !== "Auto"
+                            ? category
+                            : guessCategory(payee + " " + description, type);
 
-                    return {
-                        id: `csv-${idx}-${Date.now()}`,
-                        date,
-                        payee,
-                        description,
-                        amount,
-                        type,
-                        category: finalCategory,
-                        status
-                    };
-                });
+                        return {
+                            id: `csv-${idx}-${Date.now()}`,
+                            date,
+                            payee,
+                            description,
+                            amount,
+                            type,
+                            category: finalCategory,
+                            status
+                        };
+                    });
                 resolve(normalized);
             },
         });

@@ -526,9 +526,44 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="mt-3 flex justify-between items-center text-[10px] text-zinc-500">
-                            <button onClick={loadDemoData} className="hover:text-orange-500 font-medium underline">
-                                Try Demo Mode
-                            </button>
+                            <div className="flex gap-4">
+                                <button onClick={loadDemoData} className="hover:text-orange-500 font-medium underline">
+                                    Try Demo Mode
+                                </button>
+                                <button onClick={() => {
+                                    const headers = "Date,Payee,Description,Amount,Type,Category,Status\n";
+                                    const sample = `${new Date().toISOString().split('T')[0]},Sample Payee,Sample Desc,1000,OUT,Operational Exp,PENDING\n`;
+                                    const instructions = [
+                                        ",,,,,,",
+                                        "--- INSTRUCTIONS (This section is ignored during upload) ---,,,,,,",
+                                        "COLUMN,MEANING,,,,,",
+                                        "Type,IN = Income (Money In) | OUT = Expense (Money Out),,,,,",
+                                        "Category,Pick from the list below to auto-categorize (Optional),,,,,",
+                                        ",,,,,,",
+                                        "VALID CATEGORIES:,,,,,,",
+                                        "Payroll & Team,,,,,,",
+                                        "Taxes & Compliance,,,,,,",
+                                        "Rent & Facilities,,,,,,",
+                                        "Software & Subscriptions,,,,,,",
+                                        "Marketing & Ads,,,,,,",
+                                        "Travel & Entertainment,,,,,,",
+                                        "Contractors & Professional Services,,,,,,",
+                                        "Office Supplies,,,,,,",
+                                        "Sales / Revenue,,,,,,",
+                                        "Uncategorized,,,,,,"
+                                    ].join("\n");
+
+                                    const blob = new Blob([headers + sample + instructions], { type: "text/csv" });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = "cashflow_template.csv";
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                }} className="hover:text-orange-500 font-medium underline">
+                                    Download Template
+                                </button>
+                            </div>
                             <span className="flex items-center gap-1"><ShieldAlert size={10} /> Secure Client-Side</span>
                         </div>
                     </SpotlightCard>
