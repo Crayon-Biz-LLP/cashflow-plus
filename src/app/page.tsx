@@ -390,7 +390,7 @@ export default function LandingPage() {
                 ? 'bg-white text-black hover:bg-zinc-200 shadow-white/5'
                 : 'bg-zinc-900 text-white hover:bg-black shadow-zinc-900/10'
                 }`}>
-                Predict Your Death Date
+                Calculate Runway
                 <ArrowRight size={16} />
               </button>
             </Link>
