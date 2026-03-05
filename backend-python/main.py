@@ -245,21 +245,79 @@ def get_case_profit_margin(case_id: str):
     return calculate_profit_margin(case_id)
 
 
-@app.get("/api/cases-summary")
-def get_cases_summary():
-    """Quick summary of all cases without detailed calculations."""
+@app.post("/api/compute/profit-margins")
+def compute_all_profit_margins(payload: dict):
+    """
+    Calculate profit margins for dynamic data provided in the request.
+    Data format: { "cases": [ { "case_id": "...", "case_name": "...", "revenue": 0, "time_logs": [], "expenses": [] } ] }
+    """
+    dynamic_cases = payload.get("cases", [])
+    results = []
+    
+    for case in dynamic_cases:
+        case_id = case.get("case_id")
+        case_name = case.get("case_name", "Unknown")
+        revenue = case.get("revenue", 0)
+        time_logs = case.get("time_logs", [])
+        expenses = case.get("expenses", [])
+
+        # Calculate staff costs
+        total_hours = sum(log.get("hours", 0) for log in time_logs)
+        weighted_cost = sum(log.get("hours", 0) * log.get("cost_per_hour", 3000) for log in time_logs)
+        avg_cost_per_hour = weighted_cost / total_hours if total_hours > 0 else 0
+        staff_cost = weighted_cost
+
+        # Calculate expenses
+        total_expenses = sum(exp.get("amount", 0) for exp in expenses)
+
+        # Core calculation
+        total_cost = staff_cost + total_expenses
+        profit = revenue - total_cost
+        profit_margin = (profit / revenue * 100) if revenue > 0 else 0
+
+        # Risk assessment
+        if profit_margin > 30:
+            risk_level = "Low"
+        elif profit_margin > 15:
+            risk_level = "Medium"
+        else:
+            risk_level = "High"
+
+        results.append({
+            "case_id": case_id,
+            "case_name": case_name,
+            "revenue": revenue,
+            "staff_cost_per_hour": round(avg_cost_per_hour, 2),
+            "total_hours": total_hours,
+            "staff_cost": staff_cost,
+            "expenses": total_expenses,
+            "total_cost": total_cost,
+            "profit": profit,
+            "profit_margin": round(profit_margin, 1),
+            "risk_level": risk_level,
+            "calculated_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+    if not results:
+        return {"total_cases": 0, "cases": [], "summary": {}}
+
     return {
-        "cases": [
-            {
-                "case_id": cid,
-                "case_name": data["case_name"],
-                "revenue": data["revenue"],
-                "total_hours": sum(log["hours"] for log in data["time_logs"]),
-                "expense_count": len(data["expenses"]),
-            }
-            for cid, data in case_data.items()
-        ]
+        "total_cases": len(results),
+        "cases": results,
+        "summary": {
+            "total_revenue": sum(r["revenue"] for r in results),
+            "total_profit": sum(r["profit"] for r in results),
+            "total_cost": sum(r["total_cost"] for r in results),
+            "average_margin": round(sum(r["profit_margin"] for r in results) / len(results), 1),
+            "high_risk_count": sum(1 for r in results if r["risk_level"] == "High"),
+            "medium_risk_count": sum(1 for r in results if r["risk_level"] == "Medium"),
+            "low_risk_count": sum(1 for r in results if r["risk_level"] == "Low"),
+        },
+        "calculated_at": datetime.utcnow().isoformat() + "Z",
     }
+
+
+@app.get("/api/cases-summary")
 
 
 # ============ Dynamic Expense Analysis ============

@@ -96,6 +96,7 @@ const ExpenseSchema = new mongoose.Schema(
             enum: ["Pending", "Approved", "Rejected"],
             default: "Pending",
         },
+        bankAccountId: { type: String }, // Links to BankAccount
     },
     { timestamps: true }
 );

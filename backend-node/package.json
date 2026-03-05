@@ -2,10 +2,10 @@
     "name": "solvstrat-backend",
     "version": "1.0.0",
     "description": "solvstrat Node.js Backend — Express API with MongoDB CRUD, JWT Auth, Role-Based Permissions",
-    "main": "src/server.js",
+    "main": "src/legacy/server.js",
     "scripts": {
-        "dev": "node src/server.js",
-        "start": "node src/server.js"
+        "dev": "node src/legacy/server.js",
+        "start": "node src/legacy/server.js"
     },
     "dependencies": {
         "express": "^4.21.0",

@@ -14,6 +14,38 @@ const PORT = process.env.NODE_PORT || 5000;
 app.use(cors({ origin: "http://localhost:3000", credentials: true }));
 app.use(express.json());
 
+// ============ Notification Utils ============
+const sendWhatsApp = async (to, message) => {
+    console.log(`\n📱 [WHATSAPP SENT] To: ${to}\n💬 Message: ${message}\n`);
+    // In production: Use Twilio or Meta WhatsApp Business API
+    return true;
+};
+
+const getTimelineAlerts = (items, type) => {
+    const alerts = [];
+    const now = new Date();
+
+    items.forEach(item => {
+        if (item.status === "Paid" || item.status === "Closed") return;
+
+        const createdDate = new Date(item.createdAt || item.date);
+        const diffDays = Math.floor((now - createdDate) / (1000 * 60 * 60 * 24));
+        const id = item.invoiceId || item.billId;
+        const name = item.client || item.vendorName || "Client";
+
+        // Invoice Timeline: 7, 14, 15 days
+        // Bill Timeline: 7, 14 days
+        if (diffDays === 7) {
+            alerts.push({ id, type, title: `${type} Alert (7 Days)`, message: `${type} ${id} for ${name} is 7 days old. Follow up recommended.`, priority: "medium" });
+        } else if (diffDays === 14) {
+            alerts.push({ id, type, title: `${type} Alert (14 Days)`, message: `${type} ${id} for ${name} is 14 days old. Due tomorrow.`, priority: "high" });
+        } else if (diffDays === 15 && type === "Invoice") {
+            alerts.push({ id, type, title: `${type} Final Due (15 Days)`, message: `${type} ${id} for ${name} is due today! Sending final automated reminder.`, priority: "critical" });
+        }
+    });
+    return alerts;
+};
+
 // ============ MongoDB Connection ============
 const MONGO_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/cashflow";
 
@@ -31,157 +63,167 @@ const { User, Case, Invoice, Expense, TimeLog, Notification, Transaction, Accoun
 
 
 async function seedDatabase() {
-    const userCount = await User.countDocuments();
-    if (userCount > 0) {
-        console.log(`📦 Database already seeded (${userCount} users found)`);
-        return;
-    }
-
-    console.log("🌱 Seeding database with initial data...");
+    console.log("🌱 Checking database seeding status...");
 
     // Seed Users
-    await User.insertMany([
-        {
-            userId: "T-001",
-            name: "Arjun Khanna",
-            email: "admin@solvstrat.com",
-            password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
-            role: "Admin",
-            phone: "+91 98765 43210",
-            status: "Active",
-        },
-        {
-            userId: "T-002",
-            name: "Riya Sharma",
-            email: "riya@solvstrat.com",
-            password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
-            role: "Manager",
-            phone: "+91 98765 43211",
-            status: "Active",
-        },
-        {
-            userId: "T-003",
-            name: "Priya Mehta",
-            email: "priya@solvstrat.com",
-            password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
-            role: "Staff",
-            phone: "+91 98765 43212",
-            status: "Active",
-        },
-    ]);
+    const userCount = await User.countDocuments();
+    if (userCount === 0) {
+        console.log("   👥 Seeding Users...");
+        await User.insertMany([
+            {
+                userId: "T-001",
+                name: "Arjun Khanna",
+                email: "admin@solvstrat.com",
+                password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
+                role: "Admin",
+                phone: "+91 98765 43210",
+                status: "Active",
+            },
+            {
+                userId: "T-002",
+                name: "Riya Sharma",
+                email: "riya@solvstrat.com",
+                password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
+                role: "Manager",
+                phone: "+91 98765 43211",
+                status: "Active",
+            },
+            {
+                userId: "T-003",
+                name: "Priya Mehta",
+                email: "priya@solvstrat.com",
+                password: "$2a$10$xVfZ5J8kT5G2gH6hRqA3muPkQj7QmN0GzL8b4R3n7Y1v2WxZ0KqXy",
+                role: "Staff",
+                phone: "+91 98765 43212",
+                status: "Active",
+            },
+        ]);
+    }
 
     // Seed Cases
-    await Case.insertMany([
-        {
-            caseId: "JF-2024-001",
-            title: "Singh vs. Metro Corp",
-            client: "Ajay Singh",
-            stage: "In Progress",
-            priority: "High",
-            assigneeId: "T-001",
-            amount: 345000,
-            tags: ["Corporate", "Litigation"],
-            dueDate: new Date("2026-02-25"),
-        },
-        {
-            caseId: "JF-2024-002",
-            title: "Verma Industrial Dispute",
-            client: "Verma Steel Ltd.",
-            stage: "Review",
-            priority: "Medium",
-            assigneeId: "T-002",
-            amount: 520000,
-            tags: ["Industrial", "Dispute"],
-            dueDate: new Date("2026-02-27"),
-        },
-        {
-            caseId: "JF-2024-003",
-            title: "Apex Real Estate Fraud",
-            client: "Apex Developers",
-            stage: "In Progress",
-            priority: "Critical",
-            assigneeId: "T-003",
-            amount: 1200000,
-            tags: ["Real Estate", "Fraud"],
-            dueDate: new Date("2026-03-05"),
-        },
-        {
-            caseId: "JF-2024-004",
-            title: "Taneja IP Licensing",
-            client: "Taneja Corp",
-            stage: "Assigned",
-            priority: "Low",
-            assigneeId: "T-003",
-            amount: 180000,
-            tags: ["IP", "Licensing"],
-            dueDate: new Date("2026-03-01"),
-        },
-        {
-            caseId: "JF-2024-005",
-            title: "Gupta Tax Compliance",
-            client: "Gupta & Associates",
-            stage: "Closed",
-            priority: "Medium",
-            assigneeId: "T-001",
-            amount: 260000,
-            tags: ["Tax", "Compliance"],
-            dueDate: new Date("2026-02-10"),
-        },
-    ]);
+    const caseCount = await Case.countDocuments();
+    if (caseCount === 0) {
+        console.log("   📂 Seeding Cases...");
+        await Case.insertMany([
+            {
+                caseId: "JF-2024-001",
+                title: "Singh vs. Metro Corp",
+                client: "Ajay Singh",
+                stage: "In Progress",
+                priority: "High",
+                assigneeId: "T-001",
+                amount: 345000,
+                tags: ["Corporate", "Litigation"],
+                dueDate: new Date("2026-02-25"),
+            },
+            {
+                caseId: "JF-2024-002",
+                title: "Verma Industrial Dispute",
+                client: "Verma Steel Ltd.",
+                stage: "Review",
+                priority: "Medium",
+                assigneeId: "T-002",
+                amount: 520000,
+                tags: ["Industrial", "Dispute"],
+                dueDate: new Date("2026-02-27"),
+            },
+            {
+                caseId: "JF-2024-003",
+                title: "Apex Real Estate Fraud",
+                client: "Apex Developers",
+                stage: "In Progress",
+                priority: "Critical",
+                assigneeId: "T-003",
+                amount: 1200000,
+                tags: ["Real Estate", "Fraud"],
+                dueDate: new Date("2026-03-05"),
+            },
+            {
+                caseId: "JF-2024-004",
+                title: "Taneja IP Licensing",
+                client: "Taneja Corp",
+                stage: "Assigned",
+                priority: "Low",
+                assigneeId: "T-003",
+                amount: 180000,
+                tags: ["IP", "Licensing"],
+                dueDate: new Date("2026-03-01"),
+            },
+            {
+                caseId: "JF-2024-005",
+                title: "Gupta Tax Compliance",
+                client: "Gupta & Associates",
+                stage: "Closed",
+                priority: "Medium",
+                assigneeId: "T-001",
+                amount: 260000,
+                tags: ["Tax", "Compliance"],
+                dueDate: new Date("2026-02-10"),
+            },
+        ]);
+    }
 
     // Seed Invoices
-    await Invoice.insertMany([
-        {
-            invoiceId: "INV-2024-001",
-            caseId: "JF-2024-001",
-            client: "Ajay Singh",
-            amount: 345000,
-            gst: 62100,
-            total: 407100,
-            status: "Paid",
-            date: new Date("2026-02-20"),
-            dueDate: new Date("2026-03-05"),
-        },
-        {
-            invoiceId: "INV-2024-002",
-            caseId: "JF-2024-002",
-            client: "Verma Steel Ltd.",
-            amount: 520000,
-            gst: 93600,
-            total: 613600,
-            status: "Overdue",
-            date: new Date("2026-02-05"),
-            dueDate: new Date("2026-02-20"),
-        },
-    ]);
+    const invoiceCount = await Invoice.countDocuments();
+    if (invoiceCount === 0) {
+        console.log("   📄 Seeding Invoices...");
+        await Invoice.insertMany([
+            {
+                invoiceId: "INV-2024-001",
+                caseId: "JF-2024-001",
+                client: "Ajay Singh",
+                amount: 345000,
+                gst: 62100,
+                total: 407100,
+                status: "Paid",
+                date: new Date("2026-02-20"),
+                dueDate: new Date("2026-03-05"),
+            },
+            {
+                invoiceId: "INV-2024-002",
+                caseId: "JF-2024-002",
+                client: "Verma Steel Ltd.",
+                amount: 520000,
+                gst: 93600,
+                total: 613600,
+                status: "Overdue",
+                date: new Date("2026-02-05"),
+                dueDate: new Date("2026-02-20"),
+            },
+        ]);
+    }
 
     // Seed Expenses (with GST)
-    await Expense.insertMany([
-        {
-            expenseId: "EXP-001",
-            caseId: "JF-2024-001",
-            category: "Court Filing",
-            description: "High Court filing fee",
-            amount: 12500,
-            gstAmount: 2250,
-            totalWithGst: 14750,
-            date: new Date("2026-02-22"),
-            loggedBy: "T-001",
-            status: "Approved",
-        },
-        {
-            expenseId: "EXP-002",
-            caseId: "JF-2024-003",
-            category: "Travel",
-            description: "Mumbai-Delhi court hearing travel",
-            amount: 28000,
-            gstAmount: 5040,
-            totalWithGst: 33040,
-            date: new Date("2026-02-20"),
-            loggedBy: "T-003",
-            status: "Approved",
-        },
-    ]);
+    const expenseCount = await Expense.countDocuments();
+    if (expenseCount === 0) {
+        console.log("   💸 Seeding Expenses...");
+        await Expense.insertMany([
+            {
+                expenseId: "EXP-001",
+                caseId: "JF-2024-001",
+                category: "Court Filing",
+                description: "High Court filing fee",
+                amount: 12500,
+                gstAmount: 2250,
+                totalWithGst: 14750,
+                date: new Date("2026-02-22"),
+                loggedBy: "T-001",
+                status: "Approved",
+            },
+            {
+                expenseId: "EXP-002",
+                caseId: "JF-2024-003",
+                category: "Travel",
+                description: "Mumbai-Delhi court hearing travel",
+                amount: 28000,
+                gstAmount: 5040,
+                totalWithGst: 33040,
+                date: new Date("2026-02-20"),
+                loggedBy: "T-003",
+                status: "Approved",
+            },
+        ]);
+    }
 
     // Seed Chart of Accounts (Bigcapital-inspired default accounts)
     const accountCount = await Account.countDocuments();
@@ -404,6 +446,8 @@ app.post("/api/auth/signup", async (req, res) => {
             email,
             password, // In production, hash with bcrypt
             role: userRole,
+            phone: req.body.phone,
+            status: req.body.status || "Active",
         });
 
         const token = jwt.sign(
@@ -442,7 +486,8 @@ app.get("/api/cases/:id", authMiddleware, async (req, res) => {
     }
 });
 
-app.post("/api/cases", authMiddleware, roleGuard("Admin", "Manager"), async (req, res) => {
+app.post("/api/cases", authMiddleware, async (req, res) => {
+    console.log("🚀 CREATE CASE REQUEST RECEIVED:", req.body);
     try {
         const count = await Case.countDocuments();
         const caseId = `JF-2024-${String(count + 1).padStart(3, "0")}`;
@@ -483,20 +528,31 @@ app.get("/api/invoices", authMiddleware, async (req, res) => {
     }
 });
 
-app.post("/api/invoices", authMiddleware, roleGuard("Admin", "Manager"), async (req, res) => {
+app.post("/api/invoices", authMiddleware, async (req, res) => {
     try {
         const amount = req.body.amount;
-        const gst = Math.round(amount * 0.18);
+        const includeGst = req.body.includeGst !== false; // Default to true if not specified
+        const gst = includeGst ? Math.round(amount * 0.18) : 0;
         const count = await Invoice.countDocuments();
+        const date = new Date();
+        const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : new Date(date.getTime() + 15 * 24 * 60 * 60 * 1000);
 
         const newInvoice = await Invoice.create({
             invoiceId: `INV-2024-${String(count + 1).padStart(3, "0")}`,
             ...req.body,
             gst,
             total: amount + gst,
-            status: req.body.status || "Draft",
-            date: new Date(),
+            status: req.body.status || "Sent", // Default to Sent if not specified for 15-day timeline
+            date,
+            dueDate,
         });
+
+        // Trigger WhatsApp on creation
+        await sendWhatsApp(
+            req.body.phone || "CLIENT",
+            `Hello ${newInvoice.client}, your invoice ${newInvoice.invoiceId} for ₹${newInvoice.total} has been generated. Due date: ${dueDate.toLocaleDateString("en-IN")}.`
+        );
+
         res.status(201).json(newInvoice);
     } catch (err) {
         res.status(500).json({ error: "Server error", message: err.message });
@@ -539,6 +595,7 @@ app.post("/api/expenses", authMiddleware, async (req, res) => {
             totalWithGst: amount + gstAmount,
             loggedBy: req.user.id,
             status: "Pending",
+            bankAccountId: req.body.bankAccountId,
         });
         res.status(201).json(newExpense);
     } catch (err) {
@@ -574,8 +631,11 @@ app.post("/api/transactions", authMiddleware, async (req, res) => {
 // POSTING FLOW: Invoice -> Transaction
 app.patch("/api/invoices/:id/status", authMiddleware, async (req, res) => {
     try {
-        const { status } = req.body;
-        const inv = await Invoice.findOneAndUpdate({ invoiceId: req.params.id }, { status }, { new: true });
+        const { status, bankAccountId } = req.body;
+        const updateData = { status };
+        if (bankAccountId) updateData.bankAccountId = bankAccountId;
+
+        const inv = await Invoice.findOneAndUpdate({ invoiceId: req.params.id }, updateData, { new: true });
         if (!inv) return res.status(404).json({ error: "Invoice not found" });
 
         if (status === "Paid") {
@@ -589,10 +649,31 @@ app.patch("/api/invoices/:id/status", authMiddleware, async (req, res) => {
                 description: `Payment for Invoice ${inv.invoiceId}`,
                 referenceId: inv.invoiceId,
                 payee: inv.client,
-                date: new Date()
+                date: new Date(),
+                bankAccountId: bankAccountId || inv.bankAccountId
             });
+
+            // Increment bank account balance
+            const targetAccountId = bankAccountId || inv.bankAccountId;
+            if (targetAccountId) {
+                const bank = await BankAccount.findOne({ bankAccountId: targetAccountId });
+                if (bank) {
+                    bank.currentBalance += inv.total;
+                    await bank.save();
+                }
+            }
         }
         res.json(inv);
+    } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+    }
+});
+
+app.delete("/api/invoices/:id", authMiddleware, async (req, res) => {
+    try {
+        const inv = await Invoice.findOneAndDelete({ invoiceId: req.params.id });
+        if (!inv) return res.status(404).json({ error: "Invoice not found" });
+        res.json({ message: "Invoice deleted successfully" });
     } catch (err) {
         res.status(500).json({ error: "Server error", message: err.message });
     }
@@ -601,8 +682,11 @@ app.patch("/api/invoices/:id/status", authMiddleware, async (req, res) => {
 // POSTING FLOW: Expense -> Transaction
 app.patch("/api/expenses/:id/status", authMiddleware, async (req, res) => {
     try {
-        const { status } = req.body;
-        const exp = await Expense.findOneAndUpdate({ expenseId: req.params.id }, { status }, { new: true });
+        const { status, bankAccountId } = req.body;
+        const updateData = { status };
+        if (bankAccountId) updateData.bankAccountId = bankAccountId;
+
+        const exp = await Expense.findOneAndUpdate({ expenseId: req.params.id }, updateData, { new: true });
         if (!exp) return res.status(404).json({ error: "Expense not found" });
 
         if (status === "Approved") {
@@ -618,6 +702,15 @@ app.patch("/api/expenses/:id/status", authMiddleware, async (req, res) => {
                 payee: "Vendor", // Simplified
                 date: new Date()
             });
+
+            // Deduct from bank account if specified
+            if (exp.bankAccountId) {
+                const bank = await BankAccount.findOne({ bankAccountId: exp.bankAccountId });
+                if (bank) {
+                    bank.currentBalance -= exp.totalWithGst;
+                    await bank.save();
+                }
+            }
         }
         res.json(exp);
     } catch (err) {
@@ -636,6 +729,26 @@ app.get("/api/team", authMiddleware, async (req, res) => {
     }
 });
 
+app.patch("/api/team/:id", authMiddleware, roleGuard("Admin"), async (req, res) => {
+    try {
+        const user = await User.findOneAndUpdate({ userId: req.params.id }, req.body, { new: true }).select("-password");
+        if (!user) return res.status(404).json({ error: "User not found" });
+        res.json(user);
+    } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+    }
+});
+
+app.delete("/api/team/:id", authMiddleware, roleGuard("Admin"), async (req, res) => {
+    try {
+        const user = await User.findOneAndDelete({ userId: req.params.id });
+        if (!user) return res.status(404).json({ error: "User not found" });
+        res.json({ message: "User deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+    }
+});
+
 // ──────────── DASHBOARD STATS ────────────
 
 app.get("/api/dashboard/stats", authMiddleware, async (req, res) => {
@@ -648,57 +761,202 @@ app.get("/api/dashboard/stats", authMiddleware, async (req, res) => {
         const totalRevenue = allCases.reduce((s, c) => s + c.amount, 0);
         const activeCases = allCases.filter((c) => c.stage !== "Closed").length;
 
-        const totalPaidRevenue = allInvoices
+        const bankAccounts = await BankAccount.find({ isActive: true });
+        const currentBalance = bankAccounts.reduce((s, b) => s + b.currentBalance, 0);
+
+        const receivedRevenue = allInvoices
             .filter((i) => i.status === "Paid")
             .reduce((s, i) => s + i.total, 0);
 
-        const totalApprovedExpenses = allExpenses
-            .filter((e) => e.status === "Approved")
-            .reduce((s, e) => s + (e.totalWithGst || e.amount), 0);
-
-        const currentBalance = totalPaidRevenue - totalApprovedExpenses;
         const pendingInvoices = allInvoices
             .filter((i) => i.status !== "Paid")
             .reduce((s, i) => s + i.total, 0);
 
-        // Expense Categories Breakdown
-        const expenseCategories = ["Court Filing", "Travel", "Staff Cost", "Documentation", "Expert Witness", "Miscellaneous"];
-        const categoryBreakdown = expenseCategories.map(cat => {
-            const catExpenses = allExpenses.filter(e => e.category === cat && e.status === "Approved");
-            const catTotal = catExpenses.reduce((s, e) => s + (e.totalWithGst || e.amount), 0);
-            return {
-                label: cat,
-                amount: catTotal,
-                value: totalApprovedExpenses > 0 ? Math.round((catTotal / totalApprovedExpenses) * 100) : 0
-            };
-        }).sort((a, b) => b.amount - a.amount);
+        const allBills = await Bill.find();
+        const pendingBills = allBills
+            .filter((b) => b.status !== "Paid")
+            .reduce((s, b) => s + b.total, 0);
+
+        const pendingBillCount = allBills.filter((b) => b.status !== "Paid").length;
+
+        const totalApprovedExpenses = allExpenses
+            .filter(e => e.status === "Approved")
+            .reduce((s, e) => s + (e.totalWithGst || e.amount), 0);
+
+        // Expense Categories Breakdown (Dynamic)
+        const categoriesResult = await Expense.aggregate([
+            { $match: { status: "Approved" } },
+            { $group: { _id: "$category", total: { $sum: "$totalWithGst" } } },
+            { $sort: { total: -1 } }
+        ]);
+
+        const totalAllApproved = categoriesResult.reduce((s, r) => s + r.total, 0);
+        const categoryBreakdown = categoriesResult.map(r => ({
+            label: r._id,
+            amount: r.total,
+            value: totalAllApproved > 0 ? Math.round((r.total / totalAllApproved) * 100) : 0
+        }));
+
+        // Fetch Company Name for Dynamic Greeting
+        const companySettings = await CompanySettings.findOne();
+        const firmName = companySettings?.companyName || "Solv Prod";
 
         // Recent Cases (Top 5)
-        const recentCases = await Case.find().sort({ createdAt: -1 }).limit(5);
+        const recentCasesRaw = await Case.find().sort({ createdAt: -1 }).limit(5);
 
-        // Recent Activity (Mixed feed from Cases, Invoices, Expenses)
-        // For simplicity, we'll just pull the most recent entries from each and sort them
-        const recentApprovedExpenses = allExpenses.filter(e => e.status === "Approved").slice(-2);
-        const recentPaidInvoices = allInvoices.filter(i => i.status === "Paid").slice(-2);
+        // Recent Unpaid Invoices (Receivables)
+        const recentInvoicesRaw = await Invoice.find({ status: { $ne: "Paid" } }).sort({ dueDate: 1 }).limit(5);
+
+        // Recent Unpaid Bills (Payables)
+        const recentBillsRaw = await Bill.find({ status: { $ne: "Paid" } }).sort({ dueDate: 1 }).limit(5);
+
+        // Activity Feed (Dynamic)
+        const recentCasesActivity = await Case.find().sort({ createdAt: -1 }).limit(3);
+        const recentInvoicesActivity = await Invoice.find({ status: "Paid" }).sort({ updatedAt: -1 }).limit(3);
+        const recentExpensesActivity = await Expense.find({ status: "Approved" }).sort({ updatedAt: -1 }).limit(3);
 
         const activity = [
-            ...recentApprovedExpenses.map(e => ({ action: "Expense Approved", desc: `₹${e.amount} — ${e.description}`, time: "Latest", icon: "Receipt", color: "var(--warning)" })),
-            ...recentPaidInvoices.map(i => ({ action: "Invoice Paid", desc: `₹${i.total} for Case ${i.caseId}`, time: "Latest", icon: "FileText", color: "var(--teal-600)" })),
-            ...recentCases.slice(0, 1).map(c => ({ action: "Case Created", desc: c.title, time: "Latest", icon: "Briefcase", color: "var(--info)" }))
-        ].slice(0, 5);
+            ...recentCasesActivity.map(c => ({
+                action: "Case Created",
+                desc: `New case "${c.title}" initialized for ${c.client}`,
+                time: new Date(c.createdAt).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' }),
+                icon: "Briefcase",
+                color: "var(--teal-500)",
+                timestamp: c.createdAt
+            })),
+            ...recentInvoicesActivity.map(i => ({
+                action: "Payment Realized",
+                desc: `Invoice ${i.invoiceId} for ${i.client} marked as Paid`,
+                time: "Recently",
+                icon: "FileText",
+                color: "var(--success)",
+                timestamp: i.updatedAt
+            })),
+            ...recentExpensesActivity.map(e => ({
+                action: "Expense Approved",
+                desc: `${e.category} expense of ₹${e.amount} verified`,
+                time: "Today",
+                icon: "Receipt",
+                color: "var(--warning)",
+                timestamp: e.updatedAt
+            }))
+        ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 5);
 
         // health statistics calculations
-        const monthlyBurn = totalApprovedExpenses / 12 || 50000; // Average or fallback
+        // Burn rate: last 30 days of approved expenses
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const recentExpenses = await Expense.find({
+            status: "Approved",
+            date: { $gte: thirtyDaysAgo }
+        });
+        const monthlyBurn = recentExpenses.reduce((s, e) => s + (e.totalWithGst || e.amount), 0) || (totalApprovedExpenses / 12) || 50000;
+
         const runwayValue = monthlyBurn > 0 ? (currentBalance / monthlyBurn) : 99;
         const riskLevel = runwayValue < 3 ? "High" : runwayValue < 6 ? "Medium" : "Low";
-        const statusMessage = runwayValue > 6 ? "Healthy Cashflow" : "Monitor Burn Rate";
+        const statusMessage = runwayValue > 6 ? "Healthy Cashflow" : runwayValue > 3 ? "Monitor Burn Rate" : "Critical Runway";
+
+        // Generate Dynamic Alerts
+        const alerts = [];
+        if (runwayValue < 3) {
+            alerts.push({
+                type: "danger",
+                title: "Liquidity Alert",
+                desc: `Current runway is only ${runwayValue.toFixed(1)} months. High burn rate detected.`,
+                time: "Just now",
+                risk: "Critical"
+            });
+        }
+        if (pendingInvoices > 1000000) { // 10L+ pending
+            alerts.push({
+                type: "warning",
+                title: "Pending Collections",
+                desc: `₹${(pendingInvoices / 100000).toFixed(1)}L in unpaid invoices require immediate follow-up.`,
+                time: "Real-time",
+            });
+        }
+
+        // ──────────── CASH FORECASTING ENGINE ────────────
+        const months = [];
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        const currentMonth = today.getMonth();
+
+        let runningProjectedBalance = currentBalance;
+
+        for (let i = 0; i < 4; i++) {
+            const forecastMonth = new Date(currentYear, currentMonth + i, 1);
+            const monthLabel = forecastMonth.toLocaleDateString("en-IN", { month: 'short' });
+
+            // Monthly Inflows (Invoices due this month + Forecast Inflows)
+            const nextMonth = new Date(currentYear, currentMonth + i + 1, 1);
+
+            const monthInvoices = allInvoices.filter(inv =>
+                inv.status !== "Paid" &&
+                inv.dueDate >= forecastMonth &&
+                inv.dueDate < nextMonth
+            );
+
+            const invoiceInflow = monthInvoices.reduce((s, inv) => s + inv.total, 0);
+
+            const monthForecasts = await CashForecast.find({
+                forecastDate: { $gte: forecastMonth, $lt: nextMonth },
+                status: "Projected"
+            });
+
+            const forecastInflow = monthForecasts
+                .filter(f => f.type.includes("Inflow"))
+                .reduce((s, f) => s + (f.amount * (f.probability / 100)), 0);
+
+            const totalInflow = invoiceInflow + forecastInflow;
+
+            // Monthly Outflows (Bills due this month + Forecast Outflows)
+            const monthBills = allBills.filter(bill =>
+                bill.status !== "Paid" &&
+                bill.dueDate >= forecastMonth &&
+                bill.dueDate < nextMonth
+            );
+
+            const billOutflow = monthBills.reduce((s, bill) => s + bill.total, 0);
+
+            const forecastOutflow = monthForecasts
+                .filter(f => f.type.includes("Outflow"))
+                .reduce((s, f) => s + (f.amount * (f.probability / 100)), 0);
+
+            const totalOutflow = billOutflow + forecastOutflow;
+            const netPosition = totalInflow - totalOutflow;
+            runningProjectedBalance += netPosition;
+
+            months.push({
+                month: monthLabel,
+                inflow: Math.round(totalInflow),
+                outflow: Math.round(totalOutflow),
+                net: Math.round(netPosition),
+                projectedBalance: Math.round(runningProjectedBalance)
+            });
+        }
+
+        if (alerts.length === 0) {
+            alerts.push({
+                type: "info",
+                title: "Accounts Healthy",
+                desc: "All financial indicators are within safe thresholds for the current month.",
+                time: "Current",
+                risk: "Low"
+            });
+        }
 
         res.json({
             currentBalance,
             totalRevenue,
+            receivedRevenue,
             activeCases,
             pendingInvoices,
+            pendingInvoiceCount: allInvoices.filter(i => i.status !== "Paid").length,
+            pendingBills,
+            pendingBillCount,
             teamCount: userCount,
+            alerts,
             health: {
                 runway: runwayValue === 99 ? "∞" : runwayValue.toFixed(1),
                 riskLevel,
@@ -713,18 +971,50 @@ app.get("/api/dashboard/stats", authMiddleware, async (req, res) => {
                 Review: allCases.filter((c) => c.stage === "Review").length,
                 Closed: allCases.filter((c) => c.stage === "Closed").length,
             },
+            totalCases: allCases.length,
             expenseCategories: categoryBreakdown,
-            recentCases: recentCases.map(c => ({
-                id: c.caseId,
-                title: c.title,
-                stage: c.stage,
-                stageColor: c.stage === "In Progress" ? "badge-teal" : c.stage === "Review" ? "badge-warning" : "badge-info",
-                amount: `₹${c.amount.toLocaleString("en-IN")}`,
-                date: new Date(c.createdAt).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' }),
-                assignee: "US", // Placeholder
-                avatarClass: "avatar-teal"
+            recentCases: recentCasesRaw.map(c => {
+                const initials = c.client?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || "US";
+                const stageColors = {
+                    "New": "badge-info",
+                    "Assigned": "badge-black",
+                    "In Progress": "badge-teal",
+                    "Review": "badge-warning",
+                    "Closed": "badge-success"
+                };
+                const avatarClasses = ["avatar-teal", "avatar-blue", "avatar-purple", "avatar-amber"];
+                // Simple hash-like function for picking avatar color based on client name
+                const colorIdx = (c.client || "").split("").reduce((acc, char) => acc + char.charCodeAt(0), 0) % avatarClasses.length;
+                const avatarClass = avatarClasses[colorIdx] || "avatar-teal";
+
+                return {
+                    id: c.caseId,
+                    title: c.title,
+                    stage: c.stage,
+                    stageColor: stageColors[c.stage] || "badge-info",
+                    amount: `₹${c.amount.toLocaleString("en-IN")}`,
+                    date: new Date(c.createdAt).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' }),
+                    assignee: initials,
+                    avatarClass: avatarClass
+                };
+            }),
+            recentInvoices: recentInvoicesRaw.map(i => ({
+                id: i.invoiceId,
+                client: i.client,
+                total: i.total,
+                dueDate: i.dueDate ? new Date(i.dueDate).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' }) : "N/A",
+                status: i.status
             })),
-            activity
+            recentBills: recentBillsRaw.map(b => ({
+                id: b.billId,
+                vendor: b.vendorName || "Unknown Vendor",
+                total: b.total,
+                dueDate: b.dueDate ? new Date(b.dueDate).toLocaleDateString("en-IN", { day: 'numeric', month: 'short' }) : "N/A",
+                status: b.status
+            })),
+            forecast: months,
+            activity,
+            firmName
         });
     } catch (err) {
         res.status(500).json({ error: "Server error", message: err.message });
@@ -892,6 +1182,9 @@ app.post("/api/bills", authMiddleware, async (req, res) => {
         const count = await Bill.countDocuments();
 
         const vendor = await Vendor.findOne({ vendorId });
+        const date = new Date();
+        const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : new Date(date.getTime() + 15 * 24 * 60 * 60 * 1000);
+
         const bill = await Bill.create({
             billId: `BILL-${String(count + 1).padStart(3, "0")}`,
             ...req.body,
@@ -899,6 +1192,8 @@ app.post("/api/bills", authMiddleware, async (req, res) => {
             gst,
             total: amount + gst,
             status: req.body.status || "Pending",
+            date,
+            dueDate,
         });
 
         // Update vendor outstanding balance
@@ -915,8 +1210,11 @@ app.post("/api/bills", authMiddleware, async (req, res) => {
 
 app.patch("/api/bills/:id/status", authMiddleware, async (req, res) => {
     try {
-        const { status } = req.body;
-        const bill = await Bill.findOneAndUpdate({ billId: req.params.id }, { status }, { new: true });
+        const { status, bankAccountId } = req.body;
+        const updateData = { status };
+        if (bankAccountId) updateData.bankAccountId = bankAccountId;
+
+        const bill = await Bill.findOneAndUpdate({ billId: req.params.id }, updateData, { new: true });
         if (!bill) return res.status(404).json({ error: "Bill not found" });
 
         if (status === "Paid") {
@@ -932,7 +1230,18 @@ app.patch("/api/bills/:id/status", authMiddleware, async (req, res) => {
                 referenceId: bill.billId,
                 payee: bill.vendorName,
                 date: new Date(),
+                bankAccountId: bankAccountId || bill.bankAccountId
             });
+
+            // Deduct from bank account
+            const targetAccountId = bankAccountId || bill.bankAccountId;
+            if (targetAccountId) {
+                const bank = await BankAccount.findOne({ bankAccountId: targetAccountId });
+                if (bank) {
+                    bank.currentBalance -= bill.total;
+                    await bank.save();
+                }
+            }
 
             // Update vendor balances
             const vendor = await Vendor.findOne({ vendorId: bill.vendorId });
@@ -1111,7 +1420,7 @@ app.get("/api/bank-accounts", authMiddleware, async (req, res) => {
     }
 });
 
-app.post("/api/bank-accounts", authMiddleware, roleGuard("Admin", "Manager"), async (req, res) => {
+app.post("/api/bank-accounts", authMiddleware, async (req, res) => {
     try {
         const { bankName, accountNumber } = req.body;
         if (!bankName || !accountNumber) return res.status(400).json({ error: "bankName and accountNumber are required" });
@@ -1336,9 +1645,41 @@ app.get("/api/cash-position", authMiddleware, async (req, res) => {
 
 app.get("/api/cash-forecast", authMiddleware, async (req, res) => {
     try {
-        const forecasts = await CashForecast.find({ status: "Projected" }).sort({ forecastDate: 1 });
+        const manualForecasts = await CashForecast.find({ status: "Projected" }).sort({ forecastDate: 1 });
         const bankAccounts = await BankAccount.find({ isActive: true });
         const currentCash = bankAccounts.reduce((s, b) => s + b.currentBalance, 0);
+
+        // Fetch Receivables (Invoices) to include in actual forecast
+        const pendingInvoices = await Invoice.find({ status: { $in: ["Sent", "Overdue"] } });
+        const mappedInvoices = pendingInvoices.map(i => ({
+            forecastId: `INV-${i.invoiceId}`,
+            forecastDate: i.dueDate || i.date,
+            type: "Expected Inflow",
+            category: "Receivable",
+            description: `Invoice: ${i.invoiceId} (${i.client})`,
+            amount: i.total,
+            probability: i.status === "Overdue" ? 60 : 80, // Lower probability for overdue
+            isRecurring: false,
+            status: "Projected"
+        }));
+
+        // Fetch Payables (Bills) to include in actual forecast
+        const pendingBills = await Bill.find({ status: { $in: ["Pending", "Overdue"] } });
+        const mappedBills = pendingBills.map(b => ({
+            forecastId: `BILL-${b.billId}`,
+            forecastDate: b.dueDate || b.date,
+            type: "Expected Outflow",
+            category: "Payable",
+            description: `Bill: ${b.billId} (${b.vendorName})`,
+            amount: b.total,
+            probability: 95,
+            isRecurring: false,
+            status: "Projected"
+        }));
+
+        // Combine all forecast items
+        const allForecasts = [...manualForecasts, ...mappedInvoices, ...mappedBills];
+        allForecasts.sort((a, b) => new Date(a.forecastDate).getTime() - new Date(b.forecastDate).getTime());
 
         // Build 90-day projection
         const today = new Date();
@@ -1350,7 +1691,7 @@ app.get("/api/cash-forecast", authMiddleware, async (req, res) => {
             date.setDate(date.getDate() + d);
             const dateStr = date.toISOString().split("T")[0];
 
-            const dayForecasts = forecasts.filter(f => {
+            const dayForecasts = allForecasts.filter(f => {
                 const fDate = new Date(f.forecastDate).toISOString().split("T")[0];
                 return fDate === dateStr;
             });
@@ -1369,15 +1710,15 @@ app.get("/api/cash-forecast", authMiddleware, async (req, res) => {
         }
 
         // Summary
-        const totalExpectedInflow = forecasts.filter(f => f.type.includes("Inflow")).reduce((s, f) => s + f.amount * (f.probability / 100), 0);
-        const totalExpectedOutflow = forecasts.filter(f => f.type.includes("Outflow")).reduce((s, f) => s + f.amount * (f.probability / 100), 0);
+        const totalExpectedInflow = allForecasts.filter(f => f.type.includes("Inflow")).reduce((s, f) => s + f.amount * (f.probability / 100), 0);
+        const totalExpectedOutflow = allForecasts.filter(f => f.type.includes("Outflow")).reduce((s, f) => s + f.amount * (f.probability / 100), 0);
 
         res.json({
             currentCash,
             totalExpectedInflow: Math.round(totalExpectedInflow),
             totalExpectedOutflow: Math.round(totalExpectedOutflow),
             projectedBalance: Math.round(currentCash + totalExpectedInflow - totalExpectedOutflow),
-            forecasts,
+            forecasts: allForecasts,
             projection,
             generatedAt: new Date(),
         });
@@ -1772,22 +2113,28 @@ app.get("/api/reports/gst-summary", authMiddleware, async (req, res) => {
 
         res.json({
             period: "Current Financial Year",
-            outputGst: {
-                total: totalOutputGst,
-                fromInvoices: totalOutputGst,
-                cgst: totalSoCgst,
-                sgst: totalSoSgst,
-                igst: totalSoIgst,
+            outputGST: {
+                totalGST: totalOutputGst,
+                totalCGST: totalSoCgst,
+                totalSGST: totalSoSgst,
+                totalIGST: totalSoIgst,
+                invoiceCount: paidInvoices.length,
+                salesOrderCount: salesOrders.length,
             },
-            inputGst: {
-                total: totalInputGst,
-                fromExpenses: totalInputGstExpenses,
-                fromBills: totalInputGstBills,
-                cgst: totalPoCgst,
-                sgst: totalPoSgst,
-                igst: totalPoIgst,
+            inputGST: {
+                totalGST: totalInputGst,
+                totalCGST: totalPoCgst,
+                totalSGST: totalPoSgst,
+                totalIGST: totalPoIgst,
+                billCount: paidBills.length,
+                purchaseOrderCount: purchaseOrders.length,
             },
-            netLiability: netGstLiability,
+            netLiability: {
+                cgst: totalSoCgst - totalPoCgst,
+                sgst: totalSoSgst - totalPoSgst,
+                igst: totalSoIgst - totalPoIgst,
+                total: netGstLiability,
+            },
             itcAvailable: totalInputGst,
             gstPayable: Math.max(0, netGstLiability),
             gstRefundable: Math.max(0, -netGstLiability),
@@ -1807,12 +2154,65 @@ app.get("/api/reports/gst-summary", authMiddleware, async (req, res) => {
 
 // ──────────── PYTHON AI PROXY ────────────
 
+app.get("/api/ai/profit-margin", authMiddleware, async (req, res) => {
+    const pythonUrl = process.env.PYTHON_AI_URL || "http://localhost:8000";
+    try {
+        const allCases = await Case.find();
+        const allExpenses = await Expense.find({ status: "Approved" });
+
+        const dynamicCases = allCases.map(c => {
+            const caseExpenses = allExpenses.filter(e => e.caseId === c.caseId);
+            return {
+                case_id: c.caseId,
+                case_name: c.title,
+                revenue: c.amount,
+                time_logs: [
+                    { staff_id: "T-001", hours: 20, cost_per_hour: 3000 } // Default proxy for hours
+                ],
+                expenses: caseExpenses.map(e => ({
+                    category: e.category,
+                    amount: e.totalWithGst || e.amount
+                }))
+            };
+        });
+
+        const response = await fetch(`${pythonUrl}/api/compute/profit-margins`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cases: dynamicCases }),
+        });
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        res.status(503).json({ error: "AI service unavailable", message: error.message });
+    }
+});
+
 app.get("/api/ai/profit-margin/:caseId", authMiddleware, async (req, res) => {
     const pythonUrl = process.env.PYTHON_AI_URL || "http://localhost:8000";
     try {
-        const response = await fetch(`${pythonUrl}/api/profit-margin/${req.params.caseId}`);
+        const caseObj = await Case.findOne({ caseId: req.params.caseId });
+        if (!caseObj) return res.status(404).json({ error: "Case not found" });
+
+        const caseExpenses = await Expense.find({ caseId: req.params.caseId, status: "Approved" });
+
+        const dynamicCase = {
+            cases: [{
+                case_id: caseObj.caseId,
+                case_name: caseObj.title,
+                revenue: caseObj.amount,
+                time_logs: [{ staff_id: "T-001", hours: 25, cost_per_hour: 3000 }],
+                expenses: caseExpenses.map(e => ({ category: e.category, amount: e.totalWithGst || e.amount }))
+            }]
+        };
+
+        const response = await fetch(`${pythonUrl}/api/compute/profit-margins`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(dynamicCase),
+        });
         const data = await response.json();
-        res.json(data);
+        res.json(data.cases[0]);
     } catch (error) {
         res.status(503).json({ error: "AI service unavailable", message: error.message });
     }
@@ -1854,5 +2254,31 @@ app.listen(PORT, async () => {
     console.log(`   GET  /api/reports/gst-summary\n`);
 
     // Seed DB after server starts
-    await seedDatabase();
+    try {
+        await seedDatabase();
+    } catch (err) {
+        console.error("⚠️  Database seeding warning:", err.message);
+    }
+});
+
+// ──────────── TIMELINE ALERTS ────────────
+
+app.get("/api/notifications/alerts", authMiddleware, async (req, res) => {
+    try {
+        const invoices = await Invoice.find({ status: { $ne: "Paid" } });
+        const bills = await Bill.find({ status: { $ne: "Paid" } });
+
+        const invAlerts = getTimelineAlerts(invoices, "Invoice");
+        const billAlerts = getTimelineAlerts(bills, "Bill");
+
+        res.json([...invAlerts, ...billAlerts]);
+    } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+    }
+});
+
+app.post("/api/notifications/invoice-paid-alert", authMiddleware, async (req, res) => {
+    const { invoiceId, amount, client } = req.body;
+    await sendWhatsApp("CLIENT", `Thank you ${client}! Payment of ₹${amount} for Invoice ${invoiceId} has been cleared.`);
+    res.json({ status: "ok" });
 });
